@@ -1,0 +1,13 @@
+{
+    "type": "service_account",
+    "project_id": "albert-assist247",
+    "private_key_id": "9c577def1499b43cf44008dda585d01af40ee0bf",
+    "private_key": "-----BEGIN PRIVATE KEY-----\nMIIEvgIBADANBgkqhkiG9w0BAQEFAASCBKgwggSkAgEAAoIBAQDNpB0wgl5EzYgF\nYpvS7yTQd6J0r1r2VpLyGC0JK3cMuCJjwnBsIuu9Z9ij/tUM/VgVSzm6ImxHHepj\nsM3x/lndt3FTdot6ueiT1+7qQo8BF6eHzTClQDONvDlE3eNHG4xFDQ63W2gIRW24\nGdOHm9PtEV6yP0xeSixywWBhls8zX/gyHhvkwuhsX7ltf2BKXkyCWjKApCgCxVuT\n2YqHkysSuBEm9iw/k9X8qLmdKFeLvZo/lvnS606uR1yceunluutyBgdmSX5mpVqQ\nRHoRMN4Icivc1Q+Z4odlaCZD1ncf/qEa0XtRsE/k0zleInTgNkeYhl6OtxPx8kz8\n2aB7ff3bAgMBAAECggEABcnMS1ZbRyGBf74bHiO+fzwW1dguJC5WQlU9RnuAOHRV\nMRMPugnjmJ6IyD9Yiar2saa/HO0+65a84PB6Y4jh+635rrxwyAdEM8EjIVnqD43p\nMjCrril+XTHcOAMgFIGcgA14vN8bfW9PqGjY5BsvqtK1147IXGqtd89xbvdhPq3N\n/XCtv1mffaqkIKj2DQ8HwWOjRaQLdIv5CeKRkMHqxX1iURYfl0YpkCkx5z5CY6s4\nFcqLtkzEf9gDURKq1iqz6joo2QcJpzwWi5+4YQQzFYJl6ds51G4VADpecIPdyMXN\nbESBMEISa8sCaDfqz2jIn9Ie1AUKTM3nNKQkf0BrMQKBgQD8FOwjBZig7qr1fGiY\nYeLqot70cToNm48NOpj+I3ElXyekyRkLK2xX1AznDXS7CvaHA/EBcuAvFlcRvuT8\n9OjtgghoT6omEP0LKYlyGVAtxNqKTFsSOYuPdNB2CqQs2bQhzW5Tz2NTisSKT/0W\nYLBoddJ1kyQ84UT+fN1LQjXY6wKBgQDQ1mVj7vK1Ksh1YWpyh8kUvRRtvyFX7HmL\nhuUBORZHHpSZfJ/1vUXr1H0Pk2mAHpQffEkvJMn33EGe4ersrBtZ+DIm0CPg9p4y\nNw1MD4AWJvADq+EaKiHXPiiaTI4Mg4xuKulbVUX+jJ+CqC8UWLG76eG2lmyXONaa\n4EaPEP4y0QKBgBOhzYIsvWZLMCVOOxcjCHkdlh+TceH9a3asSZ4BRJ6UepHq13h3\nOUjdyuNzuNOYVvrM48gpGiyQoNdQ9qR8rmdQ6Ta2fZnZWNu1sG6iagwmeJ6ss6sH\nsEbL4jBPQ9n6Wn0HcsA0NpgbBpN/B0bm4NZB1tIxU3EqWiU3tERYM7lhAoGBAJ2S\ndzQc8iKCInh2xWOfUriEJircgOMfeWIuqRHwKgAFcegRoXxAkMZtMOOUvZC/AdJz\n66BXqNCM7zJbke97uLN80xJ4D+pJCnonEbBnLaUJQiXzBUjBq4EF1Ir/4lpM06O4\nWxTf1Y1IO37ROZyng4ue4ADtpQfBCiQXvwVps/NRAoGBALXztb1vBCgbcnUoZ1IV\n6Y/VhSlDqkjoMLppvDZSyXIXlrTEK0dqeGPIo5qU96PhpIil86rTxG3ARhrPv6LH\n+FjuXiV0UxKlqI8qAeXKJYhTekTCDc3eT3tziRVz0qNRSiMuOAKijCv0lif315rU\novxR/kbeknFzEjQlznKpJGMv\n-----END PRIVATE KEY-----\n",
+    "client_email": "frikkie-assist247@albert-assist247.iam.gserviceaccount.com",
+    "client_id": "109855044711736856417",
+    "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+    "token_uri": "https://oauth2.googleapis.com/token",
+    "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
+    "client_x509_cert_url": "https://www.googleapis.com/robot/v1/metadata/x509/frikkie-assist247%40albert-assist247.iam.gserviceaccount.com",
+    "universe_domain": "googleapis.com"
+  }
