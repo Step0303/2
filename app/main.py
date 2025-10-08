@@ -111,7 +111,17 @@ async def receive_message(request: Request) -> Response:
 
     # v1.7: removed 'location <address>' command
 
-    # v1.7: removed business lookup behavior
+    # v1.8: If message appears to be a business search, use the business prompt
+    if any(kw in lowered for kw in ["business ", "closest ", "near me", "find ", "restaurant", "garage", "pharmacy", "hospital", "doctor", "shop", "cafe", "coffee"]):
+        client = VertexAIClient()
+        try:
+            ai_reply = client.generate_business_reply(user_text)
+        except Exception:
+            ai_reply = "No results yet. Please specify the area or type."
+        log_message(user_number, "user", user_text)
+        log_message(user_number, "bot", ai_reply)
+        await send_whatsapp_reply(user_number, ai_reply)
+        return Response(status_code=200)
 
     # v1.7: Fallback behavior → call Vertex AI (Gemini 2.5 Flash)
     client = VertexAIClient()

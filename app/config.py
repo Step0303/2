@@ -18,8 +18,11 @@ class Settings:
     gcp_location: str = os.getenv("GOOGLE_CLOUD_REGION", os.getenv("GCP_REGION", "us-central1"))
     vertex_model: str = os.getenv("VERTEX_MODEL", "gemini-2.5-flash")
 
+    # Google Maps Platform
+    google_maps_api_key: Optional[str] = os.getenv("GOOGLE_MAPS_API_KEY")
+
     # App version
-    version: str = os.getenv("APP_VERSION", "v1.7")
+    version: str = os.getenv("APP_VERSION", "v1.8")
 
 
 settings = Settings()

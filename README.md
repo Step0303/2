@@ -83,6 +83,15 @@ gcloud services enable aiplatform.googleapis.com
 - Set verify token to `WHATSAPP_VERIFY_TOKEN`
 - Subscribe to message events
 
+### v1.8 Prompts
+
+Two prompt files guide behavior (loaded at runtime if present):
+
+- `prompts/system_prompt.txt` — overall assistant behavior
+- `prompts/business_search_prompt.txt` — business search formatting and examples
+
+If these files are absent, sensible defaults are used.
+
 ## Notes
 
 - WhatsApp text messages are parsed; non-text messages are acknowledged with 200 but ignored.
