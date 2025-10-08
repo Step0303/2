@@ -88,3 +88,12 @@ gcloud services enable aiplatform.googleapis.com
 - WhatsApp text messages are parsed; non-text messages are acknowledged with 200 but ignored.
 - Responses are trimmed to 4096 chars to meet WhatsApp API limits.
 - Customize prompt/behavior in `app/vertex.py`.
+
+## Version History
+
+ - v1.1
+  - Firestore integration using ADC (same GCP project).
+  - Support WhatsApp location messages; stores latest user location in `whatsapp_users`.
+  - New command: `closest <type>` — finds nearest businesses from `businesses` collection and replies with a list.
+- v1.0
+  - Initial Cloud Run bot with webhook verify, reverse-text echo baseline, and Vertex AI scaffolding.

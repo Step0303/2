@@ -6,6 +6,7 @@ from fastapi.responses import PlainTextResponse
 
 from .config import settings
 from .whatsapp import extract_text_message, send_whatsapp_reply
+from .firestore_client import log_message, fetch_conversation, clear_conversation
 
 
 logging.basicConfig(level=logging.INFO)
@@ -46,19 +47,52 @@ async def verify_webhook(
 async def receive_message(request: Request) -> Response:
     payload: Dict[str, Any] = await request.json()
 
+    # Handle text messages
     msg = extract_text_message(payload)
     if not msg:
         # Return 200 immediately for unsupported events to avoid retries
         return Response(status_code=200)
 
     user_number = msg["from"]
-    user_text = msg["text"]
+    user_text = msg["text"].strip()
 
-    # Reverse the incoming user text and send it back as the reply
+    lowered = user_text.lower()
+
+    # System commands (always run first)
+    if lowered == "ping":
+        await send_whatsapp_reply(user_number, "frikkie is online and ready")
+        log_message(user_number, "bot", "pong")
+        return Response(status_code=200)
+    if lowered == "version":
+        await send_whatsapp_reply(user_number, settings.version)
+        log_message(user_number, "bot", settings.version)
+        return Response(status_code=200)
+    if lowered == "reset":
+        clear_conversation(user_number)
+        await send_whatsapp_reply(user_number, "Conversation reset")
+        log_message(user_number, "bot", "Conversation reset")
+        return Response(status_code=200)
+    if lowered == "history":
+        rows = fetch_conversation(user_number, limit=100)
+        if not rows:
+            await send_whatsapp_reply(user_number, "No history yet.")
+            return Response(status_code=200)
+        # Build a simple inline transcript
+        lines = ["Conversation history (latest 100):"]
+        for sender, text in rows:
+            lines.append(f"{sender}: {text}")
+        transcript = "\n".join(lines)
+        # WhatsApp limit ~4096 chars
+        await send_whatsapp_reply(user_number, transcript[:4096])
+        log_message(user_number, "bot", "[sent history]")
+        return Response(status_code=200)
+
+    # Fallback echo behavior (reverse text as simple baseline)
     reply = user_text[::-1]
-
+    # Log user + bot messages
+    log_message(user_number, "user", user_text)
+    log_message(user_number, "bot", reply)
     await send_whatsapp_reply(user_number, reply)
-
     return Response(status_code=200)
 
 

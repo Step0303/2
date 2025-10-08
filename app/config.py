@@ -18,6 +18,9 @@ class Settings:
     gcp_location: str = os.getenv("GOOGLE_CLOUD_REGION", os.getenv("GCP_REGION", "us-central1"))
     vertex_model: str = os.getenv("VERTEX_MODEL", "gemini-1.5-flash")
 
+    # App version
+    version: str = os.getenv("APP_VERSION", "v1.3")
+
 
 settings = Settings()
 
