@@ -162,3 +162,19 @@ def clear_conversation(phone: str) -> None:
             batch = client.batch()
     batch.commit()
 
+
+# ===== Debug flag (v1.5) =====
+def set_debug_enabled(phone: str, enabled: bool) -> None:
+    client = _get_client()
+    doc = client.collection("whatsapp_users").document(phone)
+    doc.set({"phone": phone, "debug": bool(enabled)}, merge=True)
+
+
+def is_debug_enabled(phone: str) -> bool:
+    client = _get_client()
+    doc = client.collection("whatsapp_users").document(phone).get()
+    if not doc.exists:
+        return False
+    data = doc.to_dict() or {}
+    return bool(data.get("debug", False))
+

@@ -6,7 +6,7 @@ from fastapi.responses import PlainTextResponse
 
 from .config import settings
 from .whatsapp import extract_text_message, send_whatsapp_reply
-from .firestore_client import log_message, fetch_conversation, clear_conversation
+from .firestore_client import log_message, fetch_conversation, clear_conversation, set_debug_enabled, is_debug_enabled
 
 
 logging.basicConfig(level=logging.INFO)
@@ -58,33 +58,45 @@ async def receive_message(request: Request) -> Response:
 
     lowered = user_text.lower()
 
+    # Toggle debug mode
+    if lowered == "debug":
+        current = is_debug_enabled(user_number)
+        set_debug_enabled(user_number, not current)
+        state = "enabled" if not current else "disabled"
+        await send_whatsapp_reply(user_number, f"Debug {state}")
+        return Response(status_code=200)
+
     # System commands (always run first)
+    debug_on = is_debug_enabled(user_number)
+
     if lowered == "ping":
-        await send_whatsapp_reply(user_number, "frikkie is online and ready")
-        log_message(user_number, "bot", "pong")
+        if debug_on:
+            await send_whatsapp_reply(user_number, "frikkie is online and ready")
+            log_message(user_number, "bot", "pong")
         return Response(status_code=200)
     if lowered == "version":
-        await send_whatsapp_reply(user_number, settings.version)
-        log_message(user_number, "bot", settings.version)
+        if debug_on:
+            await send_whatsapp_reply(user_number, settings.version)
+            log_message(user_number, "bot", settings.version)
         return Response(status_code=200)
     if lowered == "reset":
-        clear_conversation(user_number)
-        await send_whatsapp_reply(user_number, "Conversation reset")
-        log_message(user_number, "bot", "Conversation reset")
+        if debug_on:
+            clear_conversation(user_number)
+            await send_whatsapp_reply(user_number, "Conversation reset")
+            log_message(user_number, "bot", "Conversation reset")
         return Response(status_code=200)
     if lowered == "history":
-        rows = fetch_conversation(user_number, limit=100)
-        if not rows:
-            await send_whatsapp_reply(user_number, "No history yet.")
-            return Response(status_code=200)
-        # Build a simple inline transcript
-        lines = ["Conversation history (latest 100):"]
-        for sender, text in rows:
-            lines.append(f"{sender}: {text}")
-        transcript = "\n".join(lines)
-        # WhatsApp limit ~4096 chars
-        await send_whatsapp_reply(user_number, transcript[:4096])
-        log_message(user_number, "bot", "[sent history]")
+        if debug_on:
+            rows = fetch_conversation(user_number, limit=100)
+            if not rows:
+                await send_whatsapp_reply(user_number, "No history yet.")
+                return Response(status_code=200)
+            lines = ["Conversation history (latest 100):"]
+            for sender, text in rows:
+                lines.append(f"{sender}: {text}")
+            transcript = "\n".join(lines)
+            await send_whatsapp_reply(user_number, transcript[:4096])
+            log_message(user_number, "bot", "[sent history]")
         return Response(status_code=200)
 
     # Fallback behavior: simple presence response
