@@ -1,4 +1,5 @@
 from typing import Optional
+import logging
 
 import vertexai
 from vertexai.generative_models import GenerativeModel
@@ -29,9 +30,30 @@ class VertexAIClient:
             "\n\nUser message: " + user_text.strip()
         )
 
-        response = self._model.generate_content(prompt)
-        # Prefer text output; fall back to empty string if unavailable
-        text = getattr(response, "text", None) or ""
-        return text.strip() or "I’m here! How can I help today?"
+        try:
+            response = self._model.generate_content(prompt)
+        except Exception as exc:  # pragma: no cover
+            logging.exception("Vertex AI generate_content failed: %s", exc)
+            return "I’m here! How can I help today?"
+
+        # Prefer unified .text, otherwise stitch candidate part texts
+        text = getattr(response, "text", None)
+        if isinstance(text, str) and text.strip():
+            return text.strip()
+
+        try:
+            pieces: list[str] = []
+            for cand in getattr(response, "candidates", []) or []:
+                content = getattr(cand, "content", None)
+                parts = getattr(content, "parts", []) if content is not None else []
+                for p in parts or []:
+                    t = getattr(p, "text", None)
+                    if isinstance(t, str) and t.strip():
+                        pieces.append(t.strip())
+            combined = "\n".join(pieces).strip()
+            return combined or "I’m here! How can I help today?"
+        except Exception as exc:  # pragma: no cover
+            logging.exception("Vertex AI response parse error: %s", exc)
+            return "I’m here! How can I help today?"
 
 
