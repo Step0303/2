@@ -131,30 +131,27 @@ def log_message(phone: str, sender: str, text: str) -> None:
 
 
 def fetch_conversation(phone: str, limit: int = 100) -> List[Tuple[str, str]]:
-    """Return the last N (sender, text) pairs in chronological order."""
+    """Return up to N (sender, text) pairs in chronological order.
+
+    Note: Avoids composite indexes by not ordering in the query; sorts client-side by ts.
+    """
     client = _get_client()
-    q = (
-        client.collection("processed_messages")
-        .where("phone", "==", phone)
-        .order_by("ts")
-        .limit(limit)
-    )
-    rows: List[Tuple[str, str]] = []
+    q = client.collection("processed_messages").where("phone", "==", phone).limit(1000)
+    rows_full: List[Tuple[float, str, str]] = []  # (ts_seconds, sender, text)
     for d in q.stream():
         data = d.to_dict() or {}
-        rows.append((str(data.get("sender", "")), str(data.get("text", ""))))
-    return rows
+        ts = data.get("ts")
+        ts_seconds = float(ts.timestamp()) if hasattr(ts, "timestamp") else 0.0
+        rows_full.append((ts_seconds, str(data.get("sender", "")), str(data.get("text", ""))))
+    rows_full.sort(key=lambda t: t[0])
+    trimmed = rows_full[-limit:]
+    return [(sender, text) for _, sender, text in trimmed]
 
 
 def clear_conversation(phone: str) -> None:
-    """Delete up to 1000 recent messages for the user."""
+    """Delete up to 1000 messages for the user (no ordering to avoid index requirements)."""
     client = _get_client()
-    q = (
-        client.collection("processed_messages")
-        .where("phone", "==", phone)
-        .order_by("ts")
-        .limit(1000)
-    )
+    q = client.collection("processed_messages").where("phone", "==", phone).limit(1000)
     batch = client.batch()
     count = 0
     for d in q.stream():

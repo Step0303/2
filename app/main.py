@@ -87,8 +87,8 @@ async def receive_message(request: Request) -> Response:
         log_message(user_number, "bot", "[sent history]")
         return Response(status_code=200)
 
-    # Fallback echo behavior (reverse text as simple baseline)
-    reply = user_text[::-1]
+    # Fallback behavior: simple presence response
+    reply = "I am here"
     # Log user + bot messages
     log_message(user_number, "user", user_text)
     log_message(user_number, "bot", reply)
