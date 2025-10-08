@@ -73,17 +73,32 @@ async def receive_message(request: Request) -> Response:
         if debug_on:
             await send_whatsapp_reply(user_number, "frikkie is online and ready")
             log_message(user_number, "bot", "pong")
+        else:
+            reply = "I am here"
+            log_message(user_number, "user", user_text)
+            log_message(user_number, "bot", reply)
+            await send_whatsapp_reply(user_number, reply)
         return Response(status_code=200)
     if lowered == "version":
         if debug_on:
             await send_whatsapp_reply(user_number, settings.version)
             log_message(user_number, "bot", settings.version)
+        else:
+            reply = "I am here"
+            log_message(user_number, "user", user_text)
+            log_message(user_number, "bot", reply)
+            await send_whatsapp_reply(user_number, reply)
         return Response(status_code=200)
     if lowered == "reset":
         if debug_on:
             clear_conversation(user_number)
             await send_whatsapp_reply(user_number, "Conversation reset")
             log_message(user_number, "bot", "Conversation reset")
+        else:
+            reply = "I am here"
+            log_message(user_number, "user", user_text)
+            log_message(user_number, "bot", reply)
+            await send_whatsapp_reply(user_number, reply)
         return Response(status_code=200)
     if lowered == "history":
         if debug_on:
@@ -97,6 +112,11 @@ async def receive_message(request: Request) -> Response:
             transcript = "\n".join(lines)
             await send_whatsapp_reply(user_number, transcript[:4096])
             log_message(user_number, "bot", "[sent history]")
+        else:
+            reply = "I am here"
+            log_message(user_number, "user", user_text)
+            log_message(user_number, "bot", reply)
+            await send_whatsapp_reply(user_number, reply)
         return Response(status_code=200)
 
     # Fallback behavior: simple presence response
