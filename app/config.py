@@ -16,10 +16,10 @@ class Settings:
     # Google Cloud / Vertex AI
     gcp_project: Optional[str] = os.getenv("GOOGLE_CLOUD_PROJECT") or os.getenv("GCP_PROJECT") or os.getenv("PROJECT_ID")
     gcp_location: str = os.getenv("GOOGLE_CLOUD_REGION", os.getenv("GCP_REGION", "us-central1"))
-    vertex_model: str = os.getenv("VERTEX_MODEL", "gemini-1.5-flash")
+    vertex_model: str = os.getenv("VERTEX_MODEL", "gemini-2.5-flash")
 
     # App version
-    version: str = os.getenv("APP_VERSION", "v1.3")
+    version: str = os.getenv("APP_VERSION", "v1.7")
 
 
 settings = Settings()
