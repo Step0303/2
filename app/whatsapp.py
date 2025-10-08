@@ -3,6 +3,7 @@ import logging
 import httpx
 
 from .config import settings
+from .firestore_client import upsert_whatsapp_user_location
 
 
 logger = logging.getLogger(__name__)
@@ -35,6 +36,39 @@ def extract_text_message(payload: Dict[str, Any]) -> Optional[Dict[str, str]]:
         return {"from": from_number, "text": text_body}
     except Exception as exc:  # pylint: disable=broad-except
         logger.exception("Failed to parse WhatsApp payload: %s", exc)
+        return None
+
+
+def extract_location_message(payload: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """Extract a WhatsApp location message with latitude/longitude.
+
+    Returns dict with keys: "from", "lat", "lng" or None.
+    """
+    try:
+        entries = payload.get("entry", [])
+        if not entries:
+            return None
+        changes = entries[0].get("changes", [])
+        if not changes:
+            return None
+        value = changes[0].get("value", {})
+        messages = value.get("messages", [])
+        if not messages:
+            return None
+        # Iterate over messages and find the first with a location payload
+        for msg in messages:
+            loc = msg.get("location")
+            if not isinstance(loc, dict):
+                continue
+            from_number = msg.get("from")
+            lat = loc.get("latitude") or loc.get("lat")
+            lng = loc.get("longitude") or loc.get("lng")
+            if from_number and lat is not None and lng is not None:
+                logger.info("Parsed WhatsApp location for %s: lat=%s lng=%s", from_number, lat, lng)
+                return {"from": from_number, "lat": float(lat), "lng": float(lng)}
+        return None
+    except Exception as exc:  # pylint: disable=broad-except
+        logger.exception("Failed to parse WhatsApp location payload: %s", exc)
         return None
 
 
