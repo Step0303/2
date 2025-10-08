@@ -5,7 +5,6 @@ from fastapi import FastAPI, Request, Response, HTTPException, Query
 from fastapi.responses import PlainTextResponse
 
 from .config import settings
-from .vertex import VertexAIClient
 from .whatsapp import extract_text_message, send_whatsapp_reply
 
 
@@ -55,12 +54,8 @@ async def receive_message(request: Request) -> Response:
     user_number = msg["from"]
     user_text = msg["text"]
 
-    try:
-        vertex = VertexAIClient()
-        reply = vertex.generate_reply(user_text)
-    except Exception as exc:  # pylint: disable=broad-except
-        logger.exception("Vertex AI generation failed: %s", exc)
-        reply = "Sorry, I couldn't generate a response right now. Please try again later."
+    # Reverse the incoming user text and send it back as the reply
+    reply = user_text[::-1]
 
     await send_whatsapp_reply(user_number, reply)
 
