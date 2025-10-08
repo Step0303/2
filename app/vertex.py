@@ -2,6 +2,7 @@ from typing import Optional
 import logging
 
 import vertexai
+import google.auth
 from vertexai.generative_models import GenerativeModel
 
 from .config import settings
@@ -18,12 +19,20 @@ class VertexAIClient:
         system_prompt_path: Optional[str] = "prompts/system_prompt.txt",
         business_prompt_path: Optional[str] = "prompts/business_search_prompt.txt",
     ):
-        self.project_id = project_id or settings.gcp_project
+        # Resolve project id: explicit arg → env settings → ADC default project
+        resolved_project = project_id or settings.gcp_project
+        if not resolved_project:
+            try:
+                _, adc_project = google.auth.default()
+                resolved_project = adc_project
+            except Exception:  # pragma: no cover
+                resolved_project = None
+        self.project_id = resolved_project
         self.location = location or settings.gcp_location
         self.model_name = model_name or settings.vertex_model
 
         if not self.project_id:
-            raise ValueError("GOOGLE_CLOUD_PROJECT (or equivalent) must be set for Vertex AI")
+            raise ValueError("GOOGLE_CLOUD_PROJECT not found and default project unavailable for Vertex AI")
 
         vertexai.init(project=self.project_id, location=self.location)
         self._model = GenerativeModel(self.model_name)
