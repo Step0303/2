@@ -67,6 +67,17 @@ def extract_location_message(payload: Dict[str, Any]) -> Optional[Dict[str, Any]
                 logger.info("Parsed WhatsApp location for %s: lat=%s lng=%s", from_number, lat, lng)
                 return {"from": from_number, "lat": float(lat), "lng": float(lng)}
         return None
+
+
+def parse_text_location_command(text: str) -> Optional[str]:
+    """Parse 'location <address>' command and return the address string if present."""
+    t = (text or "").strip()
+    if not t:
+        return None
+    lower = t.lower()
+    if lower.startswith("location ") and len(t.split(" ", 1)) == 2:
+        return t.split(" ", 1)[1].strip()
+    return None
     except Exception as exc:  # pylint: disable=broad-except
         logger.exception("Failed to parse WhatsApp location payload: %s", exc)
         return None

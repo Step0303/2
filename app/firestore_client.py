@@ -178,3 +178,33 @@ def is_debug_enabled(phone: str) -> bool:
     data = doc.to_dict() or {}
     return bool(data.get("debug", False))
 
+
+# ===== Business lookup (v1.6) =====
+def find_business_by_name(name: str) -> Optional[dict]:
+    """Find a business document by name (case-insensitive best effort).
+
+    Tries exact match on 'name'. If not found, scans up to 100 docs and matches
+    case-insensitively client-side (to avoid extra indexes).
+    Returns the first matching document dict with an added '__id' field.
+    """
+    client = _get_client()
+    col = client.collection("businesses")
+    # Exact match first
+    exact = list(col.where("name", "==", name).limit(1).stream())
+    if exact:
+        d = exact[0]
+        obj = d.to_dict() or {}
+        obj["__id"] = d.id
+        return obj
+    # Best-effort case-insensitive scan (bounded)
+    lower = name.strip().lower()
+    count = 0
+    for d in col.limit(100).stream():
+        data = d.to_dict() or {}
+        nm = str(data.get("name", ""))
+        if nm.strip().lower() == lower:
+            data["__id"] = d.id
+            return data
+        count += 1
+    return None
+
