@@ -67,6 +67,9 @@ def extract_location_message(payload: Dict[str, Any]) -> Optional[Dict[str, Any]
                 logger.info("Parsed WhatsApp location for %s: lat=%s lng=%s", from_number, lat, lng)
                 return {"from": from_number, "lat": float(lat), "lng": float(lng)}
         return None
+    except Exception as exc:  # pylint: disable=broad-except
+        logger.exception("Failed to parse WhatsApp location payload: %s", exc)
+        return None
 
 
 def parse_text_location_command(text: str) -> Optional[str]:
@@ -78,9 +81,6 @@ def parse_text_location_command(text: str) -> Optional[str]:
     if lower.startswith("location ") and len(t.split(" ", 1)) == 2:
         return t.split(" ", 1)[1].strip()
     return None
-    except Exception as exc:  # pylint: disable=broad-except
-        logger.exception("Failed to parse WhatsApp location payload: %s", exc)
-        return None
 
 
 async def send_whatsapp_reply(to_number: str, body_text: str) -> None:
