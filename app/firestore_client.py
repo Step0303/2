@@ -311,7 +311,27 @@ def find_closest_businesses(
                 if d.id not in ids:
                     docs.append(d)
                     ids.add(d.id)
-        # If we found businesses by category, proceed to distance filtering below
+        # If we found businesses by category, compute distances for these and
+        # return them immediately (do not expand with other tag/name or geo
+        # fallbacks). This ensures we only return businesses explicitly
+        # linked to the resolved category term_id.
+        if docs:
+            results: List[Tuple[Business, float]] = []
+            for d in docs:
+                data = d.to_dict() or {}
+                lat, lng = _extract_lat_lng_from_doc(data)
+                if lat is None or lng is None:
+                    continue
+                try:
+                    dist = haversine_km(user_lat, user_lng, float(lat), float(lng))
+                except Exception:
+                    continue
+                if max_radius_km is not None and dist > float(max_radius_km):
+                    continue
+                name = data.get("name") or d.id
+                results.append((Business(id=d.id, name=name, type=business_type, latitude=float(lat), longitude=float(lng)), dist))
+            results.sort(key=lambda x: x[1])
+            return results[:limit]
     # If no category mapping, fall back to tag-based search
     tag = resolve_tag_from_categories(base_text) or base_text
     variants = _tag_variants(tag)
