@@ -62,6 +62,7 @@ async def receive_message(request: Request) -> Response:
     if loc_msg:
         user_number = loc_msg["from"]
         upsert_whatsapp_user_location(user_number, loc_msg["lat"], loc_msg["lng"])
+        logger.info("Saved location for %s lat=%s lng=%s", user_number, loc_msg["lat"], loc_msg["lng"])  # debug trace
         log_message(user_number, "user", f"[shared location] lat={loc_msg['lat']} lng={loc_msg['lng']}")
         await send_whatsapp_reply(
             user_number,
@@ -196,12 +197,14 @@ async def receive_message(request: Request) -> Response:
             return Response(status_code=200)
 
         lat, lng = loc
+        logger.info("Closest search user=%s phrase='%s' lat=%s lng=%s", user_number, biz_type, lat, lng)  # debug trace
         # Try progressively larger radii, then fall back to DB list if still empty
         matches = find_closest_businesses(lat, lng, biz_type or "", limit=3, max_radius_km=50.0)
         if not matches:
             matches = find_closest_businesses(lat, lng, biz_type or "", limit=3, max_radius_km=200.0)
         if not matches:
             matches = find_closest_businesses(lat, lng, biz_type or "", limit=3, max_radius_km=None)
+        logger.info("Closest search results user=%s phrase='%s' count=%d", user_number, biz_type, len(matches))  # debug trace
         if not matches:
             await send_whatsapp_reply(user_number, "I couldn't find matching places nearby in my list.")
             log_message(user_number, "bot", "No nearby results")
