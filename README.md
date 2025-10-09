@@ -105,6 +105,10 @@ If these files are absent, sensible defaults are used.
 - Responses are trimmed to 4096 chars to meet WhatsApp API limits.
 - Customize prompt/behavior in `app/vertex.py`.
 
+### Google Maps Geocoding (for text addresses)
+
+Set `GOOGLE_MAPS_API_KEY` to enable converting a typed address (e.g., "location 18 President Brand Street, Bethlehem, 9700") into lat/lng. When present, the app geocodes the address and saves the user’s last known location in Firestore under `whatsapp_users/{phone}.location.coordinate { lat, lng }`.
+
 ## Version History
 
  - v1.1

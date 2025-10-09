@@ -73,13 +73,33 @@ def extract_location_message(payload: Dict[str, Any]) -> Optional[Dict[str, Any]
 
 
 def parse_text_location_command(text: str) -> Optional[str]:
-    """Parse 'location <address>' command and return the address string if present."""
+    """Parse a text command that sets location and return the address if present.
+
+    Supported patterns:
+      - "location <address>"
+      - "set my location to <address>"
+      - "set my location as <address>"
+      - "update my location to <address>"
+    """
     t = (text or "").strip()
     if not t:
         return None
     lower = t.lower()
     if lower.startswith("location ") and len(t.split(" ", 1)) == 2:
         return t.split(" ", 1)[1].strip()
+    try:
+        import re
+        m = re.match(r"^(?:set|update)\s+my\s+location\s+(?:to|as)\s+(.+)$", lower)
+        if m:
+            # Return original-cased tail using slice length from match
+            start = len(t) - len(lower)  # usually 0
+            # Use matched group length to slice from original text end
+            addr_lower = m.group(1)
+            # Find the address substring in original text by ending alignment
+            addr = t[-len(addr_lower):] if len(addr_lower) <= len(t) else addr_lower
+            return addr.strip()
+    except Exception:
+        pass
     return None
 
 
