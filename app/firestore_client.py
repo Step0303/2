@@ -218,15 +218,28 @@ def find_closest_businesses(
                 ids.add(d.id)
     # Fallback: bounded scan by name/tags substring contains
     if not docs:
+        # Fallback: do a more forgiving keyword/slug match across name and tags.
         import re
         needle = (business_type or "").strip().lower()
-        pattern = re.compile(re.escape(needle)) if needle else None
-        for d in client.collection("businesses").limit(300).stream():
+        if needle:
+            # Split into tokens (words) and keep only meaningful tokens (len>2)
+            tokens = [t for t in re.split(r"[^a-z0-9]+", needle) if len(t) > 2]
+            # Also include the slugified full phrase as a variant
+            slug_variant = _slugify(needle)
+            variants = list(dict.fromkeys([*tokens, slug_variant] if slug_variant else tokens))
+            pattern = re.compile("|".join(re.escape(v) for v in variants)) if variants else None
+        else:
+            pattern = None
+
+        # Scan a bounded number of businesses but allow more documents to improve recall
+        for d in client.collection("businesses").limit(500).stream():
             data = d.to_dict() or {}
             name = str(data.get("name", "")).lower()
+            # include slugified name for matching against hyphenated tags
+            name_slug = _slugify(name)
             tags = [str(x).lower() for x in (data.get("normalized_tags") or [])]
             tags += [str(x).lower() for x in (data.get("tags") or [])]
-            if (pattern and (pattern.search(name) or any(pattern.search(t) for t in tags))):
+            if pattern and (pattern.search(name) or (name_slug and pattern.search(name_slug)) or any(pattern.search(t) for t in tags)):
                 docs.append(d)
 
     results: List[Tuple[Business, float]] = []
