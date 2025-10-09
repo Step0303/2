@@ -15,6 +15,7 @@ from .firestore_client import (
     log_message, fetch_conversation, clear_conversation,
     set_debug_enabled, is_debug_enabled,
     upsert_whatsapp_user_location, get_user_location, find_closest_businesses,
+    find_category_ids, resolve_tag_from_categories,
 )
 from .vertex import VertexAIClient
 
@@ -91,6 +92,18 @@ def debug_find_closest(lat: float, lng: float, phrase: str = "", limit: int = 5,
     for b, d in matches:
         out.append({"id": b.id, "name": b.name, "latitude": b.latitude, "longitude": b.longitude, "distance_km": d})
     return {"count": len(out), "results": out}
+
+
+@app.get("/debug/resolve_category")
+def debug_resolve_category(phrase: str = "", api_key: str = None):
+    """Return resolved category ids and slug for a free-text phrase (debug only)."""
+    import os
+    key = os.environ.get("DEBUG_API_KEY")
+    if key and api_key != key:
+        return {"error": "invalid api_key"}
+    slug = resolve_tag_from_categories(phrase or "")
+    ids = find_category_ids(phrase or "")
+    return {"phrase": phrase, "slug": slug, "category_ids": ids}
 
 
 @app.get("/webhook")
