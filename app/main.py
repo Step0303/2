@@ -75,6 +75,24 @@ def debug_sample_businesses(limit: int = 50, api_key: str = None):
     return {"count": count, "results": out}
 
 
+@app.get("/debug/find_closest")
+def debug_find_closest(lat: float, lng: float, phrase: str = "", limit: int = 5, max_radius_km: float | None = 50.0, api_key: str = None):
+    """Call find_closest_businesses and return the result for debugging.
+
+    Protected by DEBUG_API_KEY if set.
+    """
+    import os
+    key = os.environ.get("DEBUG_API_KEY")
+    if key and api_key != key:
+        return {"error": "invalid api_key"}
+    from .firestore_client import find_closest_businesses
+    matches = find_closest_businesses(float(lat), float(lng), phrase or "", limit=int(limit), max_radius_km=(None if str(max_radius_km).lower() == 'none' else float(max_radius_km)))
+    out = []
+    for b, d in matches:
+        out.append({"id": b.id, "name": b.name, "latitude": b.latitude, "longitude": b.longitude, "distance_km": d})
+    return {"count": len(out), "results": out}
+
+
 @app.get("/webhook")
 async def verify_webhook(
     request: Request,
