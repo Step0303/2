@@ -6,7 +6,7 @@ import google.auth
 from vertexai.generative_models import GenerativeModel
 
 from .config import settings
-from .firestore_client import fetch_conversation, list_categories, search_businesses_by_tag
+from .firestore_client import fetch_conversation, list_categories, search_businesses_by_tag, get_user_location
 
 
 class VertexAIClient:
@@ -149,7 +149,6 @@ class VertexAIClient:
         corpus_block = "\n".join(corpus_lines) or "(no matching businesses found in DB)"
 
         # Get user location if available
-        from .firestore_client import get_user_location
         location_info = ""
         if user_number:
             loc = get_user_location(user_number)
