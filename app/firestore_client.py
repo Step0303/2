@@ -33,6 +33,79 @@ def haversine_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
     return R * c
 
 
+def _extract_lat_lng_from_doc(data: dict) -> Tuple[Optional[float], Optional[float]]:
+    """Robustly extract latitude and longitude from a business document dict.
+
+    Supports several shapes found in Firestore records:
+    - location: { coordinate: {lat, lng} } or { coordinate: GeoPoint }
+    - location: { lat: .., lng: .. }
+    - location: GeoPoint
+    - coordinates: {lat, lng} or {latitude, longitude} or list [lat, lng] or [lng, lat]
+    - top-level latitude / longitude fields
+    Returns (lat, lng) as floats when found, else (None, None).
+    """
+    lat = None
+    lng = None
+    try:
+        loc = data.get("location") if isinstance(data, dict) else None
+        # location may be a dict with 'coordinate' or lat/lng
+        if isinstance(loc, dict):
+            coord = loc.get("coordinate")
+            if coord is not None:
+                # GeoPoint-like: attributes 'latitude' and 'longitude'
+                if hasattr(coord, "latitude") and hasattr(coord, "longitude"):
+                    lat = getattr(coord, "latitude")
+                    lng = getattr(coord, "longitude")
+                elif isinstance(coord, dict):
+                    lat = coord.get("lat") or coord.get("latitude")
+                    lng = coord.get("lng") or coord.get("longitude")
+            # flat lat/lng in location
+            if (lat is None or lng is None) and isinstance(loc, dict):
+                lat = lat or loc.get("lat") or loc.get("latitude")
+                lng = lng or loc.get("lng") or loc.get("longitude")
+        else:
+            # location might itself be a GeoPoint-like object
+            if loc is not None and hasattr(loc, "latitude") and hasattr(loc, "longitude"):
+                lat = getattr(loc, "latitude")
+                lng = getattr(loc, "longitude")
+
+        # coordinates field: dict, list, or GeoPoint-like
+        if (lat is None or lng is None) and data.get("coordinates") is not None:
+            coord2 = data.get("coordinates")
+            if hasattr(coord2, "latitude") and hasattr(coord2, "longitude"):
+                lat = getattr(coord2, "latitude")
+                lng = getattr(coord2, "longitude")
+            elif isinstance(coord2, dict):
+                lat = lat or coord2.get("lat") or coord2.get("latitude")
+                lng = lng or coord2.get("lng") or coord2.get("longitude")
+            elif isinstance(coord2, (list, tuple)) and len(coord2) >= 2:
+                # try interpret as [lat, lng] first, else [lng, lat]
+                try:
+                    a = float(coord2[0])
+                    b = float(coord2[1])
+                    # Heuristic: if a is in [-90,90] treat as lat
+                    if -90 <= a <= 90:
+                        lat = lat or a
+                        lng = lng or b
+                    else:
+                        # assume [lng, lat]
+                        lat = lat or b
+                        lng = lng or a
+                except Exception:
+                    pass
+
+        # top-level fallbacks
+        if lat is None or lng is None:
+            lat = lat or data.get("lat") or data.get("latitude")
+            lng = lng or data.get("lng") or data.get("longitude")
+
+        if lat is None or lng is None:
+            return None, None
+        return float(lat), float(lng)
+    except Exception:
+        return None, None
+
+
 def upsert_whatsapp_user_location(phone: str, latitude: float, longitude: float) -> None:
     client = _get_client()
     doc = client.collection("whatsapp_users").document(phone)

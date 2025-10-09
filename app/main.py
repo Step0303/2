@@ -24,6 +24,33 @@ logger = logging.getLogger(__name__)
 
 app = FastAPI(title="WhatsApp Vertex AI Bot")
 
+@app.get("/debug/list_nearby")
+def debug_list_nearby(lat: float, lng: float, radius_km: float = 5.0, api_key: str = None):
+    """Debug endpoint: list businesses within radius_km of lat/lng and show extracted coords.
+
+    Protected by DEBUG_API_KEY env var. Returns a small JSON list of candidate businesses
+    with id, name, extracted lat/lng, and computed distance.
+    """
+    from .firestore_client import _extract_lat_lng_from_doc, haversine_km
+    import os
+    key = os.environ.get("DEBUG_API_KEY")
+    if key and api_key != key:
+        return {"error": "invalid api_key"}
+    from .firestore_client import _get_client
+    client = _get_client()
+    coll = client.collection("businesses")
+    out = []
+    for d in coll.limit(1000).stream():
+        data = d.to_dict() or {}
+        ex_lat, ex_lng = _extract_lat_lng_from_doc(data)
+        if ex_lat is None or ex_lng is None:
+            continue
+        dist = haversine_km(float(lat), float(lng), float(ex_lat), float(ex_lng))
+        if dist <= float(radius_km):
+            out.append({"id": d.id, "name": data.get("name"), "extracted_lat": ex_lat, "extracted_lng": ex_lng, "distance_km": dist, "normalized_tags": data.get("normalized_tags"), "tags": data.get("tags")})
+    out.sort(key=lambda x: x["distance_km"])
+    return {"count": len(out), "results": out}
+
 
 @app.get("/webhook")
 async def verify_webhook(
