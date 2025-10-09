@@ -56,10 +56,12 @@ async def verify_webhook(
 @app.post("/webhook")
 async def receive_message(request: Request) -> Response:
     payload: Dict[str, Any] = await request.json()
+    logger.debug("Received webhook payload keys: %s", list(payload.keys()))
 
     # v1.9: Handle WhatsApp native location messages first and persist last-known location
     loc_msg = extract_location_message(payload)
     if loc_msg:
+        logger.info("Received native location message from %s", loc_msg.get("from"))
         user_number = loc_msg["from"]
         upsert_whatsapp_user_location(user_number, loc_msg["lat"], loc_msg["lng"])
         logger.info("Saved location for %s lat=%s lng=%s", user_number, loc_msg["lat"], loc_msg["lng"])  # debug trace
@@ -75,12 +77,14 @@ async def receive_message(request: Request) -> Response:
     msg = extract_text_message(payload)
     if not msg:
         # Return 200 immediately for unsupported events to avoid retries
+        logger.info("No text message parsed from payload; acknowledging 200")
         return Response(status_code=200)
 
     user_number = msg["from"]
     user_text = msg["text"].strip()
 
     lowered = user_text.lower()
+    logger.info("Processing text message from %s: %s", user_number, user_text[:120])
 
     # Toggle debug mode
     if lowered == "debug":

@@ -18,21 +18,29 @@ def extract_text_message(payload: Dict[str, Any]) -> Optional[Dict[str, str]]:
     try:
         entries = payload.get("entry", [])
         if not entries:
+            logger.debug("No 'entry' in payload when parsing text message")
             return None
         changes = entries[0].get("changes", [])
         if not changes:
+            logger.debug("No 'changes' in entry[0] when parsing text message")
             return None
         value = changes[0].get("value", {})
         messages = value.get("messages", [])
         if not messages:
+            # Sometimes the webhook contains different keys (e.g., statuses/contacts). Log for visibility.
+            logger.debug("No 'messages' in change value when parsing text message; keys=%s", list(value.keys()))
             return None
         msg = messages[0]
-        if msg.get("type") != "text":
+        msg_type = msg.get("type")
+        if msg_type != "text":
+            logger.debug("Message type is not 'text' (type=%s); skipping", msg_type)
             return None
         text_body = msg.get("text", {}).get("body")
         from_number = msg.get("from")
         if not text_body or not from_number:
+            logger.debug("Missing text body or from number (body=%s, from=%s)", bool(text_body), from_number)
             return None
+        logger.info("Parsed text message from %s: %s", from_number, (text_body[:100] + '...') if len(text_body) > 100 else text_body)
         return {"from": from_number, "text": text_body}
     except Exception as exc:  # pylint: disable=broad-except
         logger.exception("Failed to parse WhatsApp payload: %s", exc)
