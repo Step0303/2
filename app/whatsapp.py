@@ -97,7 +97,15 @@ def parse_text_location_command(text: str) -> Optional[str]:
         return t.split(" ", 1)[1].strip()
     try:
         import re
+        # support patterns like:
+        # - set my location to <address>
+        # - update my location to <address>
+        # - i am at <address>
+        # - i'm at <address>
+        # - im at <address>
         m = re.match(r"^(?:set|update)\s+my\s+location\s+(?:to|as)\s+(.+)$", lower)
+        if not m:
+            m = re.match(r"^(?:i\s+am\s+at|i'm\s+at|im\s+at)\s+(.+)$", lower)
         if m:
             # Return original-cased tail using slice length from match
             start = len(t) - len(lower)  # usually 0
