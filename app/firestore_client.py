@@ -335,6 +335,34 @@ def find_closest_businesses(
     # If no category mapping, fall back to tag-based search
     tag = resolve_tag_from_categories(base_text) or base_text
     variants = _tag_variants(tag)
+
+    # Prefer exact normalized_tags matches for the full phrase or slug.
+    # This avoids earlier tokenized queries matching unrelated businesses
+    # (e.g., 'car' matching many automotive businesses).
+    exact_tag_docs: List[firestore.DocumentSnapshot] = []
+    exact_ids: Set[str] = set()
+    for v in variants:
+        for d in client.collection("businesses").where("normalized_tags", "array_contains", v).stream():
+            if d.id not in exact_ids:
+                exact_tag_docs.append(d)
+                exact_ids.add(d.id)
+    if exact_tag_docs:
+        results: List[Tuple[Business, float]] = []
+        for d in exact_tag_docs:
+            data = d.to_dict() or {}
+            lat, lng = _extract_lat_lng_from_doc(data)
+            if lat is None or lng is None:
+                continue
+            try:
+                dist = haversine_km(user_lat, user_lng, float(lat), float(lng))
+            except Exception:
+                continue
+            if max_radius_km is not None and dist > float(max_radius_km):
+                continue
+            name = data.get("name") or d.id
+            results.append((Business(id=d.id, name=name, type=business_type, latitude=float(lat), longitude=float(lng)), dist))
+        results.sort(key=lambda x: x[1])
+        return results[:limit]
     # Also consider tokenized parts of the business_type to match against
     # normalized_tags like 'car sales' where user may input 'car' or 'sales'.
     import re
