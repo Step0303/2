@@ -38,8 +38,12 @@ def upsert_whatsapp_user_location(phone: str, latitude: float, longitude: float)
     doc = client.collection("whatsapp_users").document(phone)
     doc.set({
         "phone": phone,
-        # Store under location.coordinate to match project schema
-        "location": {"coordinate": {"lat": latitude, "lng": longitude}},
+        # Store both nested coordinate and flat lat/lng for compatibility
+        "location": {
+            "coordinate": {"lat": latitude, "lng": longitude},
+            "lat": latitude,
+            "lng": longitude,
+        },
     }, merge=True)
 
 
@@ -216,6 +220,11 @@ def find_closest_businesses(
             if lat is None or lng is None:
                 lat = loc.get("lat")
                 lng = loc.get("lng")
+        # Support 'coordinates' object: coordinates.{lat,lng}
+        if (lat is None or lng is None) and isinstance(data.get("coordinates"), dict):
+            coord2 = data.get("coordinates") or {}
+            lat = coord2.get("lat", lat)
+            lng = coord2.get("lng", lng)
         # fallbacks
         lat = lat or data.get("latitude")
         lng = lng or data.get("longitude")
