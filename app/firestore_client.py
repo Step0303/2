@@ -223,7 +223,10 @@ def find_closest_businesses(
         needle = (business_type or "").strip().lower()
         if needle:
             # Split into tokens (words) and keep only meaningful tokens (len>2)
-            tokens = [t for t in re.split(r"[^a-z0-9]+", needle) if len(t) > 2]
+            tokens_raw = [t for t in re.split(r"[^a-z0-9]+", needle) if len(t) > 2]
+            # Remove generic stopwords that are not useful for business matching
+            STOPWORDS = {"business", "place", "shop", "near", "me", "closest", "nearest", "the", "a", "an", "find", "for"}
+            tokens = [t for t in tokens_raw if t not in STOPWORDS]
             # Also include the slugified full phrase as a variant
             slug_variant = _slugify(needle)
             variants = list(dict.fromkeys([*tokens, slug_variant] if slug_variant else tokens))
