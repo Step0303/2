@@ -208,6 +208,35 @@ def resolve_tag_from_categories(free_text: str) -> Optional[str]:
     return slug or None
 
 
+def find_category_ids(free_text: str) -> List[str]:
+    """Return a list of category document ids that match the free_text.
+
+    Matches by slug (field 'slug') or case-insensitive name. Returns [] when
+    no matching category is found.
+    """
+    if not free_text or not str(free_text).strip():
+        return []
+    client = _get_client()
+    slug = _slugify(free_text)
+    col = client.collection("categories")
+    ids: List[str] = []
+    # Try slug exact match (fast)
+    for d in col.where("slug", "==", slug).stream():
+        ids.append(d.id)
+    if ids:
+        return ids
+    # Bounded scan for name match (case-insensitive)
+    target = str(free_text).strip().lower()
+    for d in col.limit(500).stream():
+        data = d.to_dict() or {}
+        name = str(data.get("name") or "").strip().lower()
+        if not name:
+            continue
+        if name == target or target in name:
+            ids.append(d.id)
+    return ids
+
+
 def _tag_variants(text: str) -> List[str]:
     """Return possible tag spellings to match DB values.
 
@@ -271,8 +300,19 @@ def find_closest_businesses(
     max_radius_km: float = 50.0,
 ) -> List[Tuple[Business, float]]:
     client = _get_client()
-    # Resolve text to a canonical tag/slug and search across tag fields
+    # Resolve text to a canonical tag/slug and also try to map to category ids
     base_text = (business_type or "").strip().lower()
+    # Try to map the free text to category ids (term_id in your DB)
+    cat_ids = find_category_ids(base_text)
+    if cat_ids:
+        # Query businesses where 'category' field matches any of these ids
+        for cid in cat_ids:
+            for d in client.collection("businesses").where("category", "==", cid).stream():
+                if d.id not in ids:
+                    docs.append(d)
+                    ids.add(d.id)
+        # If we found businesses by category, proceed to distance filtering below
+    # If no category mapping, fall back to tag-based search
     tag = resolve_tag_from_categories(base_text) or base_text
     variants = _tag_variants(tag)
     # Also consider tokenized parts of the business_type to match against
