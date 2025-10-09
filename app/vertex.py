@@ -98,23 +98,69 @@ class VertexAIClient:
             "You help users search for local businesses. Ask for missing details, "
             "and respond with a clean, scannable list."
         )
-        # Try to derive a tag from the user query (simple heuristic: last noun-ish word)
-        # Then fetch matching businesses to ground the model before generation
+        # Try to derive a tag from the user query using multiple approaches
         import re
         words = [w.lower() for w in re.findall(r"[a-zA-Z]+", user_text)]
-        candidate = words[-1] if words else ""
-        docs = search_businesses_by_tag(candidate, limit=5) if candidate else []
+        
+        # Extract potential business types using different heuristics
+        candidates = []
+        
+        # Last word as fallback
+        if words:
+            candidates.append(words[-1])
+        
+        # Look for words after common search phrases
+        lowered = user_text.lower()
+        for phrase in ["find", "looking for", "need", "want", "search for", "where is", "closest"]:
+            if phrase in lowered:
+                idx = lowered.find(phrase)
+                if idx >= 0:
+                    after_phrase = lowered[idx + len(phrase):].strip()
+                    if after_phrase:
+                        # Take first few words after the phrase
+                        phrase_words = [w.lower() for w in re.findall(r"[a-zA-Z]+", after_phrase)]
+                        if phrase_words:
+                            candidates.append(" ".join(phrase_words[:3]))
+        
+        # Try each candidate to find businesses
+        docs = []
+        for candidate in candidates:
+            if candidate:
+                candidate_docs = search_businesses_by_tag(candidate, limit=5)
+                if candidate_docs:
+                    docs = candidate_docs
+                    break
+        
+        # Format business information for the prompt
         corpus_lines: list[str] = []
         for d in docs:
             name = d.get("name", d.get("__id"))
             desc = d.get("description") or d.get("about") or ""
             tags = ", ".join([t for t in (d.get("normalized_tags") or []) if isinstance(t, str)])
-            corpus_lines.append(f"- {name} | {desc} | tags: {tags}")
+            # Include location information if available
+            location_info = ""
+            loc = d.get("location") or {}
+            if isinstance(loc, dict):
+                coord = loc.get("coordinate")
+                if isinstance(coord, dict) and coord.get("lat") and coord.get("lng"):
+                    location_info = f" | location: {coord.get('lat')},{coord.get('lng')}"
+            corpus_lines.append(f"- {name} | {desc} | tags: {tags}{location_info}")
+        
         corpus_block = "\n".join(corpus_lines) or "(no matching businesses found in DB)"
+
+        # Get user location if available
+        from .firestore_client import get_user_location
+        location_info = ""
+        if user_number:
+            loc = get_user_location(user_number)
+            if loc:
+                lat, lng = loc
+                location_info = f"\nUser's current location: {lat},{lng}"
 
         prompt = (
             f"{base}\n\n"
             f"Database results for context:\n{corpus_block}\n\n"
+            f"{location_info}\n"
             f"User query: {user_text.strip()}"
         )
         try:

@@ -221,10 +221,41 @@ async def receive_message(request: Request) -> Response:
 
     # v1.8: Otherwise, if the message appears to be a general business search, use the business prompt
     if any(kw in lowered for kw in ["business ", "find ", "restaurant", "garage", "pharmacy", "hospital", "doctor", "shop", "cafe", "coffee"]):
+        # First check if we have user location to enhance business search
+        loc = get_user_location(user_number)
         client = VertexAIClient()
         try:
-            ai_reply = client.generate_business_reply(user_text, user_number=user_number)
-        except Exception:
+            # Extract potential business type from query
+            import re
+            words = [w.lower() for w in re.findall(r"[a-zA-Z]+", user_text)]
+            business_type = ""
+            
+            # Try to extract business type from common patterns
+            for kw in ["find", "looking for", "need", "want", "search for"]:
+                if kw in lowered:
+                    idx = lowered.find(kw)
+                    if idx >= 0:
+                        business_type = lowered[idx + len(kw):].strip()
+                        break
+            
+            # If we have location and business type, try to find closest businesses first
+            if loc and business_type:
+                lat, lng = loc
+                matches = find_closest_businesses(lat, lng, business_type, limit=3, max_radius_km=50.0)
+                if matches:
+                    # Format results from Firestore directly
+                    lines = ["Here are some businesses that match your search:"]
+                    for b, dist_km in matches:
+                        lines.append(f"- {b.name} — {dist_km:.1f} km away")
+                    ai_reply = "\n".join(lines)
+                else:
+                    # Fall back to AI if no direct matches
+                    ai_reply = client.generate_business_reply(user_text, user_number=user_number)
+            else:
+                # No location or business type, use AI
+                ai_reply = client.generate_business_reply(user_text, user_number=user_number)
+        except Exception as e:
+            logger.error(f"Business search error: {e}")
             ai_reply = "No results yet. Please specify the area or type."
         log_message(user_number, "user", user_text)
         log_message(user_number, "bot", ai_reply)
