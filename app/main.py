@@ -5,10 +5,11 @@ from fastapi import FastAPI, Request, Response, HTTPException, Query
 from fastapi.responses import PlainTextResponse
 
 from .config import settings
-from .whatsapp import extract_text_message, send_whatsapp_reply
+from .whatsapp import extract_text_message, extract_location_message, send_whatsapp_reply
 from .firestore_client import (
     log_message, fetch_conversation, clear_conversation,
     set_debug_enabled, is_debug_enabled,
+    upsert_whatsapp_user_location, get_user_location, find_closest_businesses,
 )
 from .vertex import VertexAIClient
 
@@ -51,7 +52,18 @@ async def verify_webhook(
 async def receive_message(request: Request) -> Response:
     payload: Dict[str, Any] = await request.json()
 
-    # v1.7: removed location handling
+    # v1.9: Handle WhatsApp native location messages first and persist last-known location
+    loc_msg = extract_location_message(payload)
+    if loc_msg:
+        user_number = loc_msg["from"]
+        upsert_whatsapp_user_location(user_number, loc_msg["lat"], loc_msg["lng"])
+        log_message(user_number, "user", f"[shared location] lat={loc_msg['lat']} lng={loc_msg['lng']}")
+        await send_whatsapp_reply(
+            user_number,
+            "Got it – I saved your location. Ask me something like 'Find the closest pharmacy'.",
+        )
+        log_message(user_number, "bot", "[acknowledged and saved location]")
+        return Response(status_code=200)
 
     # Handle text messages
     msg = extract_text_message(payload)
@@ -111,8 +123,52 @@ async def receive_message(request: Request) -> Response:
 
     # v1.7: removed 'location <address>' command
 
-    # v1.8: If message appears to be a business search, use the business prompt
-    if any(kw in lowered for kw in ["business ", "closest ", "near me", "find ", "restaurant", "garage", "pharmacy", "hospital", "doctor", "shop", "cafe", "coffee"]):
+    # v1.9: If the user asks for something "closest" or "near me", use last-known location
+    if ("closest" in lowered) or ("near me" in lowered) or ("nearest" in lowered):
+        # Heuristic to extract a business type keyword
+        import re
+        biz_type = ""
+        if "closest" in lowered:
+            # take words after 'closest'
+            after = lowered.split("closest", 1)[1]
+            words = re.findall(r"[a-zA-Z]+", after)
+            biz_type = words[0] if words else ""
+        if not biz_type and "nearest" in lowered:
+            after = lowered.split("nearest", 1)[1]
+            words = re.findall(r"[a-zA-Z]+", after)
+            biz_type = words[0] if words else ""
+        if not biz_type and "near me" in lowered:
+            before = lowered.split("near me", 1)[0]
+            words = re.findall(r"[a-zA-Z]+", before)
+            biz_type = words[-1] if words else ""
+
+        loc = get_user_location(user_number)
+        if not loc:
+            await send_whatsapp_reply(
+                user_number,
+                "Could you please share your current location using the WhatsApp location pin? Then ask again.",
+            )
+            log_message(user_number, "bot", "Requested location pin for closest search")
+            return Response(status_code=200)
+
+        lat, lng = loc
+        matches = find_closest_businesses(lat, lng, biz_type or "", limit=3, max_radius_km=50.0)
+        if not matches:
+            await send_whatsapp_reply(user_number, "I couldn't find matching places nearby in my list.")
+            log_message(user_number, "bot", "No nearby results")
+            return Response(status_code=200)
+
+        lines = ["Here are the closest options:"]
+        for b, dist_km in matches:
+            lines.append(f"- {b.name} — {dist_km:.1f} km away")
+        reply = "\n".join(lines)
+        log_message(user_number, "user", user_text)
+        log_message(user_number, "bot", reply)
+        await send_whatsapp_reply(user_number, reply)
+        return Response(status_code=200)
+
+    # v1.8: Otherwise, if the message appears to be a general business search, use the business prompt
+    if any(kw in lowered for kw in ["business ", "find ", "restaurant", "garage", "pharmacy", "hospital", "doctor", "shop", "cafe", "coffee"]):
         client = VertexAIClient()
         try:
             ai_reply = client.generate_business_reply(user_text, user_number=user_number)

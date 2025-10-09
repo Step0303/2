@@ -22,7 +22,7 @@ class Settings:
     google_maps_api_key: Optional[str] = os.getenv("GOOGLE_MAPS_API_KEY")
 
     # App version
-    version: str = os.getenv("APP_VERSION", "v1.8")
+    version: str = os.getenv("APP_VERSION", "v1.9")
 
 
 settings = Settings()

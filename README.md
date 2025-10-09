@@ -83,6 +83,13 @@ gcloud services enable aiplatform.googleapis.com
 - Set verify token to `WHATSAPP_VERIFY_TOKEN`
 - Subscribe to message events
 
+### v1.9 Highlights
+
+- Remembers user's last shared WhatsApp location and uses it for "closest/near me" queries
+- Adds native WhatsApp location message handling and acknowledgment
+- Improves Firestore access patterns and nearest-business lookup
+- Default `APP_VERSION` is now `v1.9`
+
 ### v1.8 Prompts
 
 Two prompt files guide behavior (loaded at runtime if present):
