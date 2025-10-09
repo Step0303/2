@@ -213,6 +213,9 @@ async def receive_message(request: Request) -> Response:
             await send_whatsapp_reply(user_number, "I couldn't find matching places nearby in my list.")
             log_message(user_number, "bot", "No nearby results")
             return Response(status_code=200)
+        # Log details of returned matches for easier debugging/verification
+        for b, dkm in matches:
+            logger.info("Closest match: %s (id=%s) dist_km=%.3f", b.name, b.id, dkm)
 
         lines = ["Here are the closest options:"]
         for b, dist_km in matches:

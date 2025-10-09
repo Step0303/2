@@ -245,6 +245,42 @@ def find_closest_businesses(
             if pattern and (pattern.search(name) or (name_slug and pattern.search(name_slug)) or any(pattern.search(t) for t in tags)):
                 docs.append(d)
 
+    # Geo-only fallback: if we still have no candidate docs, include any businesses within
+    # the requested max_radius_km (or all businesses when max_radius_km is None). This helps
+    # return exact/co-located businesses even when they lack matching tags or descriptive names.
+    if not docs:
+        for d in client.collection("businesses").limit(500).stream():
+            data = d.to_dict() or {}
+            # attempt to extract coordinates similar to the main loop
+            lat = None
+            lng = None
+            loc = data.get("location") or {}
+            if isinstance(loc, dict):
+                coord = loc.get("coordinate")
+                if isinstance(coord, dict):
+                    lat = coord.get("lat")
+                    lng = coord.get("lng")
+                if lat is None or lng is None:
+                    lat = loc.get("lat")
+                    lng = loc.get("lng")
+            if (lat is None or lng is None) and isinstance(data.get("coordinates"), dict):
+                coord2 = data.get("coordinates") or {}
+                lat = coord2.get("lat", lat)
+                lng = coord2.get("lng", lng)
+            lat = lat or data.get("latitude")
+            lng = lng or data.get("longitude")
+            if lat is None or lng is None:
+                continue
+            try:
+                dist = haversine_km(user_lat, user_lng, float(lat), float(lng))
+            except Exception:
+                continue
+            if max_radius_km is not None and dist > float(max_radius_km):
+                continue
+            if d.id not in ids:
+                docs.append(d)
+                ids.add(d.id)
+
     results: List[Tuple[Business, float]] = []
     for d in docs:
         data = d.to_dict() or {}
