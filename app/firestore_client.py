@@ -50,7 +50,7 @@ def _extract_lat_lng_from_doc(data: dict) -> Tuple[Optional[float], Optional[flo
         loc = data.get("location") if isinstance(data, dict) else None
         # location may be a dict with 'coordinate' or lat/lng
         if isinstance(loc, dict):
-            coord = loc.get("coordinate")
+            coord = loc.get("coordinate") or loc.get("coordinates")
             if coord is not None:
                 # GeoPoint-like: attributes 'latitude' and 'longitude'
                 if hasattr(coord, "latitude") and hasattr(coord, "longitude"):
