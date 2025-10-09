@@ -305,19 +305,64 @@ def find_closest_businesses(
     # Try to map the free text to category ids (term_id in your DB)
     cat_ids = find_category_ids(base_text)
     if cat_ids:
-        # Query businesses where 'category' field matches any of these ids
-        for cid in cat_ids:
-            for d in client.collection("businesses").where("category", "==", cid).stream():
-                if d.id not in ids:
-                    docs.append(d)
-                    ids.add(d.id)
-        # If we found businesses by category, compute distances for these and
-        # return them immediately (do not expand with other tag/name or geo
-        # fallbacks). This ensures we only return businesses explicitly
-        # linked to the resolved category term_id.
-        if docs:
+        # Collect businesses whose 'category' field explicitly matches one of the
+        # resolved category ids. We enforce strict matching (string equality or
+        # membership when the business stores categories as a list).
+        docs: List[firestore.DocumentSnapshot] = []
+        ids: Set[str] = set()
+        # Use 'in' query when number of ids is reasonable, otherwise loop.
+        try:
+            if 1 <= len(cat_ids) <= 10:
+                for d in client.collection("businesses").where("category", "in", cat_ids).stream():
+                    if d.id not in ids:
+                        docs.append(d)
+                        ids.add(d.id)
+            else:
+                for cid in cat_ids:
+                    for d in client.collection("businesses").where("category", "==", cid).stream():
+                        if d.id not in ids:
+                            docs.append(d)
+                            ids.add(d.id)
+        except Exception:
+            # Some Firestore deployments may not support 'in' or may error; fall
+            # back to per-id queries.
+            ids.clear()
+            docs.clear()
+            for cid in cat_ids:
+                for d in client.collection("businesses").where("category", "==", cid).stream():
+                    if d.id not in ids:
+                        docs.append(d)
+                        ids.add(d.id)
+
+        # Defensive filter: ensure the document's category field indeed matches
+        # one of the resolved cat_ids (string equality or membership in list).
+        filtered_docs: List[firestore.DocumentSnapshot] = []
+        for d in docs:
+            data = d.to_dict() or {}
+            cat_field = data.get("category")
+            matches = False
+            if isinstance(cat_field, (list, tuple, set)):
+                for c in cat_field:
+                    try:
+                        if str(c) in cat_ids:
+                            matches = True
+                            break
+                    except Exception:
+                        continue
+            else:
+                try:
+                    if str(cat_field) in cat_ids:
+                        matches = True
+                except Exception:
+                    matches = False
+            if matches:
+                filtered_docs.append(d)
+
+        # If we found category-matched businesses, compute distances and return
+        # only these (no tag/name/geo fallbacks).
+        if filtered_docs:
             results: List[Tuple[Business, float]] = []
-            for d in docs:
+            for d in filtered_docs:
                 data = d.to_dict() or {}
                 lat, lng = _extract_lat_lng_from_doc(data)
                 if lat is None or lng is None:
