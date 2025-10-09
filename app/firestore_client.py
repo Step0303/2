@@ -135,14 +135,33 @@ def resolve_tag_from_categories(free_text: str) -> Optional[str]:
     return slug or None
 
 
+def _tag_variants(text: str) -> List[str]:
+    """Return possible tag spellings to match DB values.
+
+    Includes the raw lowercase phrase (spaces preserved) and a slug form.
+    """
+    raw = (text or "").strip().lower()
+    slug = _slugify(raw)
+    variants: List[str] = []
+    if raw:
+        variants.append(raw)
+    if slug and slug != raw:
+        variants.append(slug)
+    return variants
+
+
 def search_businesses_by_tag(tag: str, *, limit: int = 5) -> List[dict]:
     """Return up to N businesses that contain the given normalized tag."""
     client = _get_client()
     t = (tag or "").strip().lower()
     if not t:
         return []
+    # Try multiple variants (raw phrase and slug)
+    variants = _tag_variants(t)
     # Query normalized_tags first
-    docs_norm = client.collection("businesses").where("normalized_tags", "array_contains", t).limit(limit).stream()
+    docs_norm = []
+    for v in variants:
+        docs_norm.extend(list(client.collection("businesses").where("normalized_tags", "array_contains", v).limit(limit).stream()))
     results: List[dict] = []
     seen: Set[str] = set()
     for d in docs_norm:
@@ -155,22 +174,19 @@ def search_businesses_by_tag(tag: str, *, limit: int = 5) -> List[dict]:
     # Then query legacy 'tags'
     remaining = max(0, limit - len(results))
     if remaining > 0:
-        docs_tags = client.collection("businesses").where("tags", "array_contains", t).limit(remaining).stream()
-        for d in docs_tags:
-            if d.id in seen:
-                continue
-            data = d.to_dict() or {}
-            data["__id"] = d.id
-            results.append(data)
-            seen.add(d.id)
+        for v in variants:
             if len(results) >= limit:
                 break
-    return results
-    results: List[dict] = []
-    for d in docs:
-        data = d.to_dict() or {}
-        data["__id"] = d.id
-        results.append(data)
+            docs_tags = client.collection("businesses").where("tags", "array_contains", v).limit(remaining).stream()
+            for d in docs_tags:
+                if d.id in seen:
+                    continue
+                data = d.to_dict() or {}
+                data["__id"] = d.id
+                results.append(data)
+                seen.add(d.id)
+                if len(results) >= limit:
+                    break
     return results
 
 def find_closest_businesses(
@@ -183,15 +199,23 @@ def find_closest_businesses(
 ) -> List[Tuple[Business, float]]:
     client = _get_client()
     # Resolve text to a canonical tag/slug and search across tag fields
-    tag = resolve_tag_from_categories(business_type or "") or (business_type or "").strip().lower()
-    # Combine two queries (normalized_tags and tags)
-    docs = list(client.collection("businesses").where("normalized_tags", "array_contains", tag).stream())
+    base_text = (business_type or "").strip().lower()
+    tag = resolve_tag_from_categories(base_text) or base_text
+    variants = _tag_variants(tag)
+    # Combine two queries (normalized_tags and tags) for all variants
+    docs: List[firestore.DocumentSnapshot] = []
+    ids: Set[str] = set()
+    for v in variants:
+        for d in client.collection("businesses").where("normalized_tags", "array_contains", v).stream():
+            if d.id not in ids:
+                docs.append(d)
+                ids.add(d.id)
     # Expand with 'tags' results (avoid duplicates)
-    ids: Set[str] = {d.id for d in docs}
-    for d in client.collection("businesses").where("tags", "array_contains", tag).stream():
-        if d.id not in ids:
-            docs.append(d)
-            ids.add(d.id)
+    for v in variants:
+        for d in client.collection("businesses").where("tags", "array_contains", v).stream():
+            if d.id not in ids:
+                docs.append(d)
+                ids.add(d.id)
     # Fallback: bounded scan by name/tags substring contains
     if not docs:
         import re
