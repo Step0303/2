@@ -164,19 +164,27 @@ async def receive_message(request: Request) -> Response:
         # Heuristic to extract a business type keyword
         import re
         biz_type = ""
-        if "closest" in lowered:
-            # take words after 'closest'
-            after = lowered.split("closest", 1)[1]
-            words = re.findall(r"[a-zA-Z]+", after)
-            biz_type = words[0] if words else ""
-        if not biz_type and "nearest" in lowered:
-            after = lowered.split("nearest", 1)[1]
-            words = re.findall(r"[a-zA-Z]+", after)
-            biz_type = words[0] if words else ""
-        if not biz_type and "near me" in lowered:
-            before = lowered.split("near me", 1)[0]
-            words = re.findall(r"[a-zA-Z]+", before)
-            biz_type = words[-1] if words else ""
+        def words_after(token: str) -> list[str]:
+            seg = lowered.split(token, 1)[1] if token in lowered else ""
+            return re.findall(r"[a-zA-Z]+", seg)
+        def words_before(token: str) -> list[str]:
+            seg = lowered.split(token, 1)[0] if token in lowered else ""
+            return re.findall(r"[a-zA-Z]+", seg)
+        # Prefer a noun phrase of up to 3 words (e.g., 'ford dealership', 'used car')
+        candidates: list[str] = []
+        wa = words_after("closest")
+        if wa:
+            candidates.append(" ".join(wa[:3]).strip())
+        wa = words_after("nearest")
+        if wa:
+            candidates.append(" ".join(wa[:3]).strip())
+        wb = words_before("near me")
+        if wb:
+            tail = wb[-3:]
+            candidates.append(" ".join(tail).strip())
+        # Reduce candidates: longest non-empty first
+        candidates = sorted([c for c in candidates if c], key=lambda s: -len(s))
+        biz_type = candidates[0] if candidates else ""
 
         loc = get_user_location(user_number)
         if not loc:
