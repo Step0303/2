@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import List, Optional, Tuple
+from typing import List, Optional, Tuple, Set
 
 from google.cloud import firestore
 
@@ -94,13 +94,74 @@ def list_categories(limit: int = 200) -> List[str]:
     return sorted(tag_set)[:limit]
 
 
+def _slugify(text: str) -> str:
+    """Normalize free text to a slug used in categories and tags.
+
+    Lowercase, replace non-alphanumeric with '-', collapse duplicates.
+    """
+    import re
+    t = (text or "").strip().lower()
+    t = re.sub(r"[^a-z0-9]+", "-", t)
+    t = re.sub(r"-+", "-", t).strip("-")
+    return t
+
+
+def resolve_tag_from_categories(free_text: str) -> Optional[str]:
+    """Try map free text like 'Telecommunications/VOIP' to a canonical tag/slug.
+
+    Looks up the `categories` collection where docs may have fields like
+    'slug' and 'name'. Returns slug if found, else a slugified free-text.
+    """
+    client = _get_client()
+    slug = _slugify(free_text)
+    col = client.collection("categories")
+    # Try slug exact match
+    Docs = list(col.where("slug", "==", slug).limit(1).stream())
+    if Docs:
+        return slug
+    # Try name exact (case-insensitive best effort via bounded scan)
+    target = (free_text or "").strip().lower()
+    for d in col.limit(200).stream():
+        data = d.to_dict() or {}
+        nm = str(data.get("name", "")).strip().lower()
+        if nm == target:
+            s = str(data.get("slug") or _slugify(nm))
+            return s
+    # Fallback: return slugified text
+    return slug or None
+
+
 def search_businesses_by_tag(tag: str, *, limit: int = 5) -> List[dict]:
     """Return up to N businesses that contain the given normalized tag."""
     client = _get_client()
     t = (tag or "").strip().lower()
     if not t:
         return []
-    docs = client.collection("businesses").where("normalized_tags", "array_contains", t).limit(limit).stream()
+    # Query normalized_tags first
+    docs_norm = client.collection("businesses").where("normalized_tags", "array_contains", t).limit(limit).stream()
+    results: List[dict] = []
+    seen: Set[str] = set()
+    for d in docs_norm:
+        data = d.to_dict() or {}
+        data["__id"] = d.id
+        results.append(data)
+        seen.add(d.id)
+        if len(results) >= limit:
+            return results
+    # Then query legacy 'tags'
+    remaining = max(0, limit - len(results))
+    if remaining > 0:
+        docs_tags = client.collection("businesses").where("tags", "array_contains", t).limit(remaining).stream()
+        for d in docs_tags:
+            if d.id in seen:
+                continue
+            data = d.to_dict() or {}
+            data["__id"] = d.id
+            results.append(data)
+            seen.add(d.id)
+            if len(results) >= limit:
+                break
+    return results
     results: List[dict] = []
     for d in docs:
         data = d.to_dict() or {}
@@ -117,10 +178,28 @@ def find_closest_businesses(
     max_radius_km: float = 50.0,
 ) -> List[Tuple[Business, float]]:
     client = _get_client()
-    # Match against normalized_tags array (case-insensitive):
-    tag = (business_type or "").strip().lower()
-    q = client.collection("businesses").where("normalized_tags", "array_contains", tag)
-    docs = q.stream()
+    # Resolve text to a canonical tag/slug and search across tag fields
+    tag = resolve_tag_from_categories(business_type or "") or (business_type or "").strip().lower()
+    # Combine two queries (normalized_tags and tags)
+    docs = list(client.collection("businesses").where("normalized_tags", "array_contains", tag).stream())
+    # Expand with 'tags' results (avoid duplicates)
+    ids: Set[str] = {d.id for d in docs}
+    for d in client.collection("businesses").where("tags", "array_contains", tag).stream():
+        if d.id not in ids:
+            docs.append(d)
+            ids.add(d.id)
+    # Fallback: bounded scan by name/tags substring contains
+    if not docs:
+        import re
+        needle = (business_type or "").strip().lower()
+        pattern = re.compile(re.escape(needle)) if needle else None
+        for d in client.collection("businesses").limit(300).stream():
+            data = d.to_dict() or {}
+            name = str(data.get("name", "")).lower()
+            tags = [str(x).lower() for x in (data.get("normalized_tags") or [])]
+            tags += [str(x).lower() for x in (data.get("tags") or [])]
+            if (pattern and (pattern.search(name) or any(pattern.search(t) for t in tags))):
+                docs.append(d)
 
     results: List[Tuple[Business, float]] = []
     for d in docs:
