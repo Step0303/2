@@ -387,7 +387,32 @@ def find_closest_businesses(
         results.append((Business(id=d.id, name=name, type=business_type, latitude=float(lat), longitude=float(lng)), dist))
 
     results.sort(key=lambda x: x[1])
-    return results[:limit]
+    # If we found matches via tags/names return them. Otherwise, as a final
+    # fallback, return the nearest businesses purely by geo proximity. This
+    # guarantees the user will see nearby options (e.g., Trellidor) even when
+    # text/tag matching fails.
+    if results:
+        return results[:limit]
+
+    # Final geo fallback: scan a larger set and return nearest docs within
+    # max_radius_km (or all if max_radius_km is None). Limit the scan to 1000
+    # documents to bound runtime.
+    geo_candidates: List[Tuple[Business, float]] = []
+    for d in client.collection("businesses").limit(1000).stream():
+        data = d.to_dict() or {}
+        lat, lng = _extract_lat_lng_from_doc(data)
+        if lat is None or lng is None:
+            continue
+        try:
+            dist = haversine_km(user_lat, user_lng, float(lat), float(lng))
+        except Exception:
+            continue
+        if max_radius_km is not None and dist > float(max_radius_km):
+            continue
+        geo_candidates.append((Business(id=d.id, name=data.get("name") or d.id, type=business_type, latitude=float(lat), longitude=float(lng)), dist))
+
+    geo_candidates.sort(key=lambda x: x[1])
+    return geo_candidates[:limit]
 
 
 
