@@ -106,6 +106,46 @@ def debug_resolve_category(phrase: str = "", api_key: str = None):
     return {"phrase": phrase, "slug": slug, "category_ids": ids}
 
 
+@app.get("/debug/business")
+def debug_get_business(id: str | None = None, ids: str | None = None, api_key: str = None):
+    """Return raw business document(s) for the given id or comma-separated ids.
+
+    Use `id` for a single id or `ids=comma,separated,ids` for multiple.
+    """
+    import os
+    from .firestore_client import _get_client
+    key = os.environ.get("DEBUG_API_KEY")
+    if key and api_key != key:
+        return {"error": "invalid api_key"}
+    c = _get_client()
+    wanted = []
+    if id:
+        wanted = [id]
+    elif ids:
+        wanted = [s.strip() for s in ids.split(",") if s.strip()]
+    else:
+        return {"error": "no id(s) provided"}
+    out = []
+    for bid in wanted:
+        doc = c.collection("businesses").document(bid).get()
+        if not doc.exists:
+            out.append({"id": bid, "found": False})
+            continue
+        data = doc.to_dict() or {}
+        # Only return a subset useful for debugging
+        out.append({
+            "id": bid,
+            "found": True,
+            "name": data.get("name"),
+            "category": data.get("category"),
+            "categories": data.get("categories"),
+            "normalized_tags": data.get("normalized_tags"),
+            "tags": data.get("tags"),
+            "location": data.get("location"),
+        })
+    return {"count": len(out), "results": out}
+
+
 @app.get("/webhook")
 async def verify_webhook(
     request: Request,
