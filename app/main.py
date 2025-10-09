@@ -52,6 +52,29 @@ def debug_list_nearby(lat: float, lng: float, radius_km: float = 5.0, api_key: s
     return {"count": len(out), "results": out}
 
 
+@app.get("/debug/sample_businesses")
+def debug_sample_businesses(limit: int = 50, api_key: str = None):
+    """Return the first `limit` businesses with their raw document fields for inspection.
+
+    Protected by DEBUG_API_KEY env var.
+    """
+    import os
+    from .firestore_client import _get_client
+    key = os.environ.get("DEBUG_API_KEY")
+    if key and api_key != key:
+        return {"error": "invalid api_key"}
+    client = _get_client()
+    col = client.collection("businesses")
+    out = []
+    count = 0
+    for d in col.limit(int(limit)).stream():
+        data = d.to_dict() or {}
+        # include the raw document for inspection
+        out.append({"id": d.id, "doc": data})
+        count += 1
+    return {"count": count, "results": out}
+
+
 @app.get("/webhook")
 async def verify_webhook(
     request: Request,
