@@ -5,7 +5,12 @@ from fastapi import FastAPI, Request, Response, HTTPException, Query
 from fastapi.responses import PlainTextResponse
 
 from .config import settings
-from .whatsapp import extract_text_message, extract_location_message, send_whatsapp_reply
+from .whatsapp import (
+    extract_text_message,
+    extract_location_message,
+    parse_text_location_command,
+    send_whatsapp_reply,
+)
 from .firestore_client import (
     log_message, fetch_conversation, clear_conversation,
     set_debug_enabled, is_debug_enabled,
@@ -123,6 +128,37 @@ async def receive_message(request: Request) -> Response:
 
     # v1.7: removed 'location <address>' command
 
+    # v1.9: If user sets location via text command, geocode and save
+    addr = parse_text_location_command(user_text)
+    if addr:
+        import httpx
+        import urllib.parse
+        api_key = settings.google_maps_api_key
+        if not api_key:
+            await send_whatsapp_reply(user_number, "I couldn't set your location because the Maps API key isn't configured.")
+            return Response(status_code=200)
+        try:
+            q = urllib.parse.urlencode({"address": addr, "key": api_key})
+            url = f"https://maps.googleapis.com/maps/api/geocode/json?{q}"
+            async with httpx.AsyncClient(timeout=15) as hc:
+                resp = await hc.get(url)
+                resp.raise_for_status()
+                data = resp.json()
+            results = data.get("results") or []
+            if not results:
+                await send_whatsapp_reply(user_number, "I couldn't find that address. Please try sharing a location pin.")
+                return Response(status_code=200)
+            loc = results[0].get("geometry", {}).get("location", {})
+            lat = float(loc.get("lat"))
+            lng = float(loc.get("lng"))
+            upsert_whatsapp_user_location(user_number, lat, lng)
+            await send_whatsapp_reply(user_number, f"Got it – I've updated your location to {results[0].get('formatted_address','that area')}.")
+            log_message(user_number, "bot", "[saved geocoded location]")
+            return Response(status_code=200)
+        except Exception:
+            await send_whatsapp_reply(user_number, "I couldn't set your location right now. Please share a location pin instead.")
+            return Response(status_code=200)
+
     # v1.9: If the user asks for something "closest" or "near me", use last-known location
     if ("closest" in lowered) or ("near me" in lowered) or ("nearest" in lowered):
         # Heuristic to extract a business type keyword
@@ -152,7 +188,12 @@ async def receive_message(request: Request) -> Response:
             return Response(status_code=200)
 
         lat, lng = loc
+        # Try progressively larger radii, then fall back to DB list if still empty
         matches = find_closest_businesses(lat, lng, biz_type or "", limit=3, max_radius_km=50.0)
+        if not matches:
+            matches = find_closest_businesses(lat, lng, biz_type or "", limit=3, max_radius_km=200.0)
+        if not matches:
+            matches = find_closest_businesses(lat, lng, biz_type or "", limit=3, max_radius_km=None)
         if not matches:
             await send_whatsapp_reply(user_number, "I couldn't find matching places nearby in my list.")
             log_message(user_number, "bot", "No nearby results")
