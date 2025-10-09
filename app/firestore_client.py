@@ -65,6 +65,49 @@ def get_user_location(phone: str) -> Optional[Tuple[float, float]]:
     return float(lat), float(lng)
 
 
+def list_categories(limit: int = 200) -> List[str]:
+    """Return up to N category names from `categories` collection if present.
+
+    Falls back to deriving categories from businesses' normalized_tags when
+    a dedicated categories collection is not available.
+    """
+    client = _get_client()
+    col = client.collection("categories")
+    docs = list(col.limit(limit).stream())
+    if docs:
+        cats: List[str] = []
+        for d in docs:
+            data = d.to_dict() or {}
+            name = data.get("name") or d.id
+            if name:
+                cats.append(str(name))
+        return cats[:limit]
+
+    # Fallback: mine tags from businesses
+    tag_set = set()
+    for d in client.collection("businesses").limit(500).stream():
+        data = d.to_dict() or {}
+        tags = data.get("normalized_tags") or []
+        for t in tags or []:
+            if isinstance(t, str) and t.strip():
+                tag_set.add(t.strip())
+    return sorted(tag_set)[:limit]
+
+
+def search_businesses_by_tag(tag: str, *, limit: int = 5) -> List[dict]:
+    """Return up to N businesses that contain the given normalized tag."""
+    client = _get_client()
+    t = (tag or "").strip().lower()
+    if not t:
+        return []
+    docs = client.collection("businesses").where("normalized_tags", "array_contains", t).limit(limit).stream()
+    results: List[dict] = []
+    for d in docs:
+        data = d.to_dict() or {}
+        data["__id"] = d.id
+        results.append(data)
+    return results
+
 def find_closest_businesses(
     user_lat: float,
     user_lng: float,

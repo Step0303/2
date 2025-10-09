@@ -115,7 +115,7 @@ async def receive_message(request: Request) -> Response:
     if any(kw in lowered for kw in ["business ", "closest ", "near me", "find ", "restaurant", "garage", "pharmacy", "hospital", "doctor", "shop", "cafe", "coffee"]):
         client = VertexAIClient()
         try:
-            ai_reply = client.generate_business_reply(user_text)
+            ai_reply = client.generate_business_reply(user_text, user_number=user_number)
         except Exception:
             ai_reply = "No results yet. Please specify the area or type."
         log_message(user_number, "user", user_text)
@@ -126,7 +126,7 @@ async def receive_message(request: Request) -> Response:
     # v1.7: Fallback behavior → call Vertex AI (Gemini 2.5 Flash)
     client = VertexAIClient()
     try:
-        ai_reply = client.generate_reply(user_text)
+        ai_reply = client.generate_reply(user_text, user_number=user_number)
     except Exception:
         ai_reply = "I’m here! How can I help today?"
 
