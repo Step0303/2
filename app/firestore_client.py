@@ -275,6 +275,14 @@ def find_closest_businesses(
     base_text = (business_type or "").strip().lower()
     tag = resolve_tag_from_categories(base_text) or base_text
     variants = _tag_variants(tag)
+    # Also consider tokenized parts of the business_type to match against
+    # normalized_tags like 'car sales' where user may input 'car' or 'sales'.
+    import re
+    needle = (business_type or "").strip().lower()
+    tokens_raw = [t for t in re.split(r"[^a-z0-9]+", needle) if len(t) > 0]
+    # Keep tokens of length > 1 to avoid tiny words; keep also the full slug
+    tokens = [t for t in tokens_raw if len(t) > 1]
+    slug_variant = _slugify(needle)
     # Combine two queries (normalized_tags and tags) for all variants
     docs: List[firestore.DocumentSnapshot] = []
     ids: Set[str] = set()
@@ -283,9 +291,32 @@ def find_closest_businesses(
             if d.id not in ids:
                 docs.append(d)
                 ids.add(d.id)
+    # Also query by individual tokens to match tag elements like 'car' or 'sales'
+    for t in tokens:
+        for d in client.collection("businesses").where("normalized_tags", "array_contains", t).stream():
+            if d.id not in ids:
+                docs.append(d)
+                ids.add(d.id)
+    # Also include slug variant as a tag query
+    if slug_variant:
+        for d in client.collection("businesses").where("normalized_tags", "array_contains", slug_variant).stream():
+            if d.id not in ids:
+                docs.append(d)
+                ids.add(d.id)
     # Expand with 'tags' results (avoid duplicates)
     for v in variants:
         for d in client.collection("businesses").where("tags", "array_contains", v).stream():
+            if d.id not in ids:
+                docs.append(d)
+                ids.add(d.id)
+    # Token-based queries for legacy 'tags' field as well
+    for t in tokens:
+        for d in client.collection("businesses").where("tags", "array_contains", t).stream():
+            if d.id not in ids:
+                docs.append(d)
+                ids.add(d.id)
+    if slug_variant:
+        for d in client.collection("businesses").where("tags", "array_contains", slug_variant).stream():
             if d.id not in ids:
                 docs.append(d)
                 ids.add(d.id)
