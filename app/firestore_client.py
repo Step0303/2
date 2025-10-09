@@ -304,6 +304,38 @@ def find_closest_businesses(
     base_text = (business_type or "").strip().lower()
     # Try to map the free text to category ids (term_id in your DB)
     cat_ids = find_category_ids(base_text)
+    # If we couldn't resolve a category id from the categories collection,
+    # attempt to infer one from businesses that have the exact normalized tag.
+    # This helps when the categories collection is missing entries but businesses
+    # are tagged consistently (e.g., many businesses with normalized_tag
+    # 'security barriers' share the same `category` id).
+    if not cat_ids:
+        # sample businesses for each exact tag variant and collect their categories
+        sample_counts: dict = {}
+        total_samples = 0
+        # use variants of the tag (raw phrase and slug)
+        tag_variants = _tag_variants(base_text)
+        for v in tag_variants:
+            try:
+                # limit to 50 samples per variant to bound cost
+                for d in client.collection("businesses").where("normalized_tags", "array_contains", v).limit(50).stream():
+                    data = d.to_dict() or {}
+                    cat = data.get("category")
+                    if cat is None:
+                        continue
+                    total_samples += 1
+                    try:
+                        key = str(cat)
+                    except Exception:
+                        continue
+                    sample_counts[key] = sample_counts.get(key, 0) + 1
+            except Exception:
+                continue
+        # Pick a dominant category if it exists (at least 2 samples and >=40% of samples)
+        if total_samples >= 2 and sample_counts:
+            best_cat, best_count = max(sample_counts.items(), key=lambda t: t[1])
+            if best_count >= 2 and (best_count / float(total_samples)) >= 0.4:
+                cat_ids = [best_cat]
     if cat_ids:
         # Collect businesses whose 'category' field explicitly matches one of the
         # resolved category ids. We enforce strict matching (string equality or
