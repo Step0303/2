@@ -350,6 +350,7 @@ def find_closest_businesses(
     *,
     limit: int = 1,
     max_radius_km: float = 50.0,
+    allow_geo_fallback: bool = True,
 ) -> List[Tuple[Business, float]]:
     client = _get_client()
     # Resolve text to a canonical tag/slug and also try to map to category ids
@@ -598,7 +599,7 @@ def find_closest_businesses(
     # Geo-only fallback: if we still have no candidate docs, include any businesses within
     # the requested max_radius_km (or all businesses when max_radius_km is None). This helps
     # return exact/co-located businesses even when they lack matching tags or descriptive names.
-    if not docs:
+    if not docs and allow_geo_fallback:
         for d in client.collection("businesses").limit(500).stream():
             data = d.to_dict() or {}
             # attempt to extract coordinates similar to the main loop
@@ -674,6 +675,8 @@ def find_closest_businesses(
     # Final geo fallback: scan a larger set and return nearest docs within
     # max_radius_km (or all if max_radius_km is None). Limit the scan to 1000
     # documents to bound runtime.
+    if not allow_geo_fallback:
+        return []
     geo_candidates: List[Tuple[Business, float]] = []
     for d in client.collection("businesses").limit(1000).stream():
         data = d.to_dict() or {}
