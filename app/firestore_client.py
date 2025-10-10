@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import List, Optional, Tuple, Set
+from typing import List, Optional, Tuple, Set, Dict
 
 from google.cloud import firestore
 
@@ -169,6 +169,58 @@ def list_categories(limit: int = 200) -> List[str]:
             if isinstance(t, str) and t.strip():
                 tag_set.add(t.strip())
     return sorted(tag_set)[:limit]
+
+
+def set_pending_suggestions(phone: str, options: List[str], original: str) -> None:
+    """Store pending suggestion options for a user in whatsapp_users doc."""
+    client = _get_client()
+    doc = client.collection("whatsapp_users").document(phone)
+    doc.set({"phone": phone, "pending_suggestions": {"original": original, "options": options}}, merge=True)
+
+
+def get_pending_suggestions(phone: str) -> Optional[Dict]:
+    client = _get_client()
+    doc = client.collection("whatsapp_users").document(phone).get()
+    if not doc.exists:
+        return None
+    data = doc.to_dict() or {}
+    return data.get("pending_suggestions")
+
+
+def clear_pending_suggestions(phone: str) -> None:
+    client = _get_client()
+    doc = client.collection("whatsapp_users").document(phone)
+    doc.set({"pending_suggestions": firestore.DELETE_FIELD}, merge=True)
+
+
+def suggest_tag_candidates(free_text: str, limit: int = 5) -> List[str]:
+    """Return up to `limit` tag suggestions for the free_text.
+
+    Heuristic: tokenize free_text, scan a bounded number of businesses and
+    count matching normalized_tags that contain any token (substring). Return
+    the most frequent tags as suggestions.
+    """
+    import re
+    if not free_text or not str(free_text).strip():
+        return []
+    tokens = [t for t in re.split(r"[^a-z0-9]+", free_text.lower()) if len(t) > 1]
+    if not tokens:
+        return []
+    counts: Dict[str, int] = {}
+    client = _get_client()
+    # Scan a bounded set of businesses to keep cost/time reasonable
+    for d in client.collection("businesses").limit(500).stream():
+        data = d.to_dict() or {}
+        tags = [str(x).lower() for x in (data.get("normalized_tags") or [])]
+        for tag in tags:
+            for t in tokens:
+                if t in tag:
+                    counts[tag] = counts.get(tag, 0) + 1
+    if not counts:
+        return []
+    # sort by frequency then alphabetically
+    sorted_tags = sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))
+    return [t for t, _ in sorted_tags[:limit]]
 
 
 def _slugify(text: str) -> str:

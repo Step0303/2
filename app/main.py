@@ -16,6 +16,7 @@ from .firestore_client import (
     set_debug_enabled, is_debug_enabled,
     upsert_whatsapp_user_location, get_user_location, find_closest_businesses,
     find_category_ids, resolve_tag_from_categories,
+    suggest_tag_candidates, set_pending_suggestions, get_pending_suggestions, clear_pending_suggestions,
 )
 from .vertex import VertexAIClient
 
@@ -328,6 +329,18 @@ async def receive_message(request: Request) -> Response:
         if not matches:
             matches = find_closest_businesses(lat, lng, biz_type or "", limit=3, max_radius_km=200.0)
         if not matches:
+            # If no matches, suggest likely tag candidates and prompt the user
+            suggestions = suggest_tag_candidates(biz_type or "", limit=5)
+            if suggestions:
+                # store pending suggestions for this user and prompt
+                set_pending_suggestions(user_number, suggestions, biz_type or "")
+                lines = ["I didn't find an exact match. Did you mean one of these? Reply with the number:"]
+                for i, s in enumerate(suggestions, start=1):
+                    lines.append(f"{i}. {s}")
+                await send_whatsapp_reply(user_number, "\n".join(lines))
+                log_message(user_number, "bot", "prompted suggestions")
+                return Response(status_code=200)
+            # final fallback: broad DB search by name/tags
             matches = find_closest_businesses(lat, lng, biz_type or "", limit=3, max_radius_km=None)
         logger.info("Closest search results user=%s phrase='%s' count=%d", user_number, biz_type, len(matches))  # debug trace
         if not matches:
@@ -352,6 +365,25 @@ async def receive_message(request: Request) -> Response:
         # First check if we have user location to enhance business search
         loc = get_user_location(user_number)
         client = VertexAIClient()
+        # Check if the user is replying to a suggestions prompt with a number
+        pending = get_pending_suggestions(user_number)
+        if pending:
+            # See if the user's message is a selection index
+            import re
+            m = re.match(r"^\s*(\d+)\s*$", user_text)
+            if m:
+                idx = int(m.group(1)) - 1
+                opts = pending.get("options") or []
+                if 0 <= idx < len(opts):
+                    choice = opts[idx]
+                    # clear pending and rerun search using the chosen tag
+                    clear_pending_suggestions(user_number)
+                    log_message(user_number, "user", f"selected_suggestion:{choice}")
+                    # use the chosen tag as business_type and continue below
+                    business_type = choice
+                else:
+                    await send_whatsapp_reply(user_number, "Sorry, I didn't understand that selection. Please reply with the number of your choice.")
+                    return Response(status_code=200)
         try:
             # Extract potential business type from query
             import re
