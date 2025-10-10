@@ -240,6 +240,36 @@ async def receive_message(request: Request) -> Response:
             else:
                 await send_whatsapp_reply(user_number, "Sorry, I didn't understand that selection. Reply with the number of your choice.")
                 return Response(status_code=200)
+        else:
+            # Allow users to reply with the suggestion text itself (case-insensitive)
+            opts = pending_early.get("options") or []
+            matched = False
+            for choice_obj in opts:
+                # normalize possible stored forms
+                val = None
+                if isinstance(choice_obj, dict):
+                    val = choice_obj.get("value") or choice_obj.get("business_name") or choice_obj.get("name")
+                elif isinstance(choice_obj, str):
+                    val = choice_obj
+                if not val:
+                    continue
+                try:
+                    if user_text.strip().lower() == str(val).strip().lower():
+                        # treat as selection
+                        clear_pending_suggestions(user_number)
+                        log_message(user_number, "user", f"selected_suggestion:{choice_obj}")
+                        if isinstance(choice_obj, dict) and choice_obj.get("value"):
+                            user_text = choice_obj.get("value")
+                        elif isinstance(choice_obj, str):
+                            user_text = choice_obj
+                        lowered = user_text.lower()
+                        matched = True
+                        break
+                except Exception:
+                    continue
+            if not matched:
+                await send_whatsapp_reply(user_number, "Sorry, I didn't understand that selection. Reply with the number of your choice.")
+                return Response(status_code=200)
 
     # Toggle debug mode
     if lowered == "debug":
