@@ -207,6 +207,36 @@ def clear_pending_suggestions(phone: str) -> None:
     doc.set({"pending_suggestions": firestore.DELETE_FIELD}, merge=True)
 
 
+def set_last_structured_query(phone: str, spec: dict) -> None:
+    client = _get_client()
+    doc = client.collection("whatsapp_users").document(phone)
+    doc.set({"phone": phone, "last_structured_query": spec}, merge=True)
+
+
+def get_last_structured_query(phone: str) -> Optional[dict]:
+    client = _get_client()
+    doc = client.collection("whatsapp_users").document(phone).get()
+    if not doc.exists:
+        return None
+    data = doc.to_dict() or {}
+    return data.get("last_structured_query")
+
+
+def set_last_suggestions(phone: str, suggestions: List[str]) -> None:
+    client = _get_client()
+    doc = client.collection("whatsapp_users").document(phone)
+    doc.set({"phone": phone, "last_suggestions": suggestions}, merge=True)
+
+
+def get_last_suggestions(phone: str) -> Optional[List[str]]:
+    client = _get_client()
+    doc = client.collection("whatsapp_users").document(phone).get()
+    if not doc.exists:
+        return None
+    data = doc.to_dict() or {}
+    return data.get("last_suggestions")
+
+
 def suggest_tag_candidates(free_text: str, limit: int = 5) -> List[str]:
     """Return up to `limit` tag suggestions for the free_text.
 

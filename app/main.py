@@ -424,7 +424,12 @@ async def receive_message(request: Request) -> Response:
 
         # Execute the structured query returned by the LLM
         try:
-            from .firestore_client import execute_structured_query
+            from .firestore_client import execute_structured_query, set_last_structured_query, set_last_suggestions
+            # persist the structured query for audit/debug
+            try:
+                set_last_structured_query(user_number, spec)
+            except Exception:
+                logger.exception("Failed to persist structured query")
             results = execute_structured_query(spec, user_lat=lat, user_lng=lng)
         except Exception as exc:
             logger.exception("Structured query execution failed: %s", exc)
@@ -448,10 +453,19 @@ async def receive_message(request: Request) -> Response:
             cand_list = list(cand)[:200]
             suggestions = client.suggest_alternatives(user_text, cand_list)
             if suggestions:
-                set_pending_suggestions(user_number, [ {"value": s} for s in suggestions ], user_text)
+                # persist suggestions and pending options
+                try:
+                    set_last_suggestions(user_number, suggestions)
+                except Exception:
+                    logger.exception("Failed to persist suggestions")
+                set_pending_suggestions(user_number, [ {"value": s, "business_name": s} for s in suggestions ], user_text)
                 lines = ["I didn't find exact matches. Did you mean one of these? Reply with the number:"]
                 for i, s in enumerate(suggestions, start=1):
                     lines.append(f"{i}. {s}")
+                # if debug is enabled, echo the structured query and suggestions in logs
+                if is_debug_enabled(user_number):
+                    logger.info("Structured query for %s: %s", user_number, spec)
+                    logger.info("Suggestions for %s: %s", user_number, suggestions)
                 await send_whatsapp_reply(user_number, "\n".join(lines))
                 log_message(user_number, "bot", "prompted suggestions")
                 return Response(status_code=200)
