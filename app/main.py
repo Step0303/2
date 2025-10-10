@@ -325,9 +325,9 @@ async def receive_message(request: Request) -> Response:
         lat, lng = loc
         logger.info("Closest search user=%s phrase='%s' lat=%s lng=%s", user_number, biz_type, lat, lng)  # debug trace
         # Try progressively larger radii, then fall back to DB list if still empty
-        matches = find_closest_businesses(lat, lng, biz_type or "", limit=3, max_radius_km=50.0)
+        matches = find_closest_businesses(lat, lng, biz_type or "", limit=3, max_radius_km=50.0, allow_geo_fallback=False)
         if not matches:
-            matches = find_closest_businesses(lat, lng, biz_type or "", limit=3, max_radius_km=200.0)
+            matches = find_closest_businesses(lat, lng, biz_type or "", limit=3, max_radius_km=200.0, allow_geo_fallback=False)
         if not matches:
             # If no matches, suggest likely tag candidates and prompt the user
             suggestions = suggest_tag_candidates(biz_type or "", limit=5)
@@ -401,7 +401,7 @@ async def receive_message(request: Request) -> Response:
             # If we have location and business type, try to find closest businesses first
             if loc and business_type:
                 lat, lng = loc
-                matches = find_closest_businesses(lat, lng, business_type, limit=3, max_radius_km=50.0)
+                matches = find_closest_businesses(lat, lng, business_type, limit=3, max_radius_km=50.0, allow_geo_fallback=False)
                 if matches:
                     # Format results from Firestore directly
                     lines = ["Here are some businesses that match your search:"]
@@ -409,7 +409,17 @@ async def receive_message(request: Request) -> Response:
                         lines.append(f"- {b.name} — {dist_km:.1f} km away")
                     ai_reply = "\n".join(lines)
                 else:
-                    # Fall back to AI if no direct matches
+                    # If no direct matches, suggest likely tags and prompt user
+                    suggestions = suggest_tag_candidates(business_type or "", limit=5)
+                    if suggestions:
+                        set_pending_suggestions(user_number, suggestions, business_type or "")
+                        lines = ["I didn't find an exact match. Did you mean one of these? Reply with the number:"]
+                        for i, s in enumerate(suggestions, start=1):
+                            lines.append(f"{i}. {s}")
+                        await send_whatsapp_reply(user_number, "\n".join(lines))
+                        log_message(user_number, "bot", "prompted suggestions")
+                        return Response(status_code=200)
+                    # Fall back to AI if no suggestions
                     ai_reply = client.generate_business_reply(user_text, user_number=user_number)
             else:
                 # No location or business type, use AI
