@@ -418,7 +418,13 @@ async def receive_message(request: Request) -> Response:
         logger.info("Closest search user=%s phrase='%s' lat=%s lng=%s", user_number, biz_type, lat, lng)  # debug trace
         # New v2.2: LLM-first structured query
         client = VertexAIClient()
-        spec = client.generate_structured_query(biz_type or user_text, user_lat=lat, user_lng=lng)
+        spec, raw_text = client.generate_structured_query(biz_type or user_text, user_lat=lat, user_lng=lng)
+        # persist raw LLM output for debugging
+        from .firestore_client import set_last_structured_query
+        try:
+            set_last_structured_query(user_number, {"spec": spec, "raw": raw_text})
+        except Exception:
+            pass
         if not spec:
             # fallback to previous behavior if LLM didn't produce a query
             matches = find_closest_businesses(lat, lng, biz_type or "", limit=3, max_radius_km=50.0, allow_geo_fallback=False)
@@ -450,12 +456,7 @@ async def receive_message(request: Request) -> Response:
 
         # Execute the structured query returned by the LLM
         try:
-            from .firestore_client import execute_structured_query, set_last_structured_query, set_last_suggestions
-            # persist the structured query for audit/debug
-            try:
-                set_last_structured_query(user_number, spec)
-            except Exception:
-                logger.exception("Failed to persist structured query")
+            from .firestore_client import execute_structured_query, set_last_suggestions
             results = execute_structured_query(spec, user_lat=lat, user_lng=lng)
         except Exception as exc:
             logger.exception("Structured query execution failed: %s", exc)

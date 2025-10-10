@@ -186,7 +186,7 @@ class VertexAIClient:
             logging.exception("Vertex AI business parse error: %s", exc)
             return "No results yet. Could you specify the area or type?"
 
-    def generate_structured_query(self, user_text: str, *, user_lat: Optional[float] = None, user_lng: Optional[float] = None) -> Optional[dict]:
+    def generate_structured_query(self, user_text: str, *, user_lat: Optional[float] = None, user_lng: Optional[float] = None) -> tuple:
         """Ask the LLM to produce a structured Firestore query JSON for the user's request.
 
         Returns a dict following the schema expected by execute_structured_query, or
@@ -220,7 +220,8 @@ class VertexAIClient:
                             pieces.append(t.strip())
                 text = "\n".join(pieces).strip()
             if not text:
-                return None
+                # Return raw_text as empty and spec None
+                return None, ""
             # Extract JSON from model output (best-effort)
             import json, re
             m = re.search(r"\{.*\}", text, re.S)
@@ -230,9 +231,9 @@ class VertexAIClient:
             else:
                 jtext = m.group(0)
             spec = json.loads(jtext)
-            return spec
+            return spec, text
         except Exception:
-            return None
+            return None, (text if 'text' in locals() else "")
 
     def format_results_with_llm(self, user_text: str, results: list, *, user_number: Optional[str] = None) -> str:
         """Ask the LLM to format search results into a concise WhatsApp reply.
