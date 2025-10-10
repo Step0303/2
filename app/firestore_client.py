@@ -223,6 +223,48 @@ def suggest_tag_candidates(free_text: str, limit: int = 5) -> List[str]:
     return [t for t, _ in sorted_tags[:limit]]
 
 
+def suggest_token_nearest(user_lat: float, user_lng: float, free_text: str, token_limit: int = 5):
+    """For each token in free_text, find the nearest business that contains the token
+    (in normalized_tags or name). Return up to token_limit suggestions as a list of
+    dicts: {value: token, business_id, business_name, distance_km} ordered by distance.
+    """
+    import re
+    tokens = [t for t in re.split(r"[^a-z0-9]+", (free_text or "").lower()) if len(t) > 1]
+    if not tokens:
+        return []
+    client = _get_client()
+    # For each token keep the nearest business found
+    nearest_for_token = {}
+    for d in client.collection("businesses").limit(500).stream():
+        data = d.to_dict() or {}
+        name = str(data.get("name") or "").lower()
+        tags = [str(x).lower() for x in (data.get("normalized_tags") or [])]
+        lat, lng = _extract_lat_lng_from_doc(data)
+        if lat is None or lng is None:
+            continue
+        try:
+            dist = haversine_km(user_lat, user_lng, float(lat), float(lng))
+        except Exception:
+            continue
+        for t in tokens:
+            matched = False
+            if any(t in tag for tag in tags):
+                matched = True
+            elif t in name:
+                matched = True
+            if not matched:
+                continue
+            prev = nearest_for_token.get(t)
+            if prev is None or dist < prev[0]:
+                nearest_for_token[t] = (dist, d.id, data.get("name") or d.id)
+
+    # Build suggestion list ordered by distance
+    suggestions = []
+    for t, (dist, bid, bname) in sorted(nearest_for_token.items(), key=lambda kv: kv[1][0])[:token_limit]:
+        suggestions.append({"value": t, "business_id": bid, "business_name": bname, "distance_km": dist})
+    return suggestions
+
+
 def _slugify(text: str) -> str:
     """Normalize free text to a slug used in categories and tags.
 

@@ -16,7 +16,7 @@ from .firestore_client import (
     set_debug_enabled, is_debug_enabled,
     upsert_whatsapp_user_location, get_user_location, find_closest_businesses,
     find_category_ids, resolve_tag_from_categories,
-    suggest_tag_candidates, set_pending_suggestions, get_pending_suggestions, clear_pending_suggestions,
+    suggest_tag_candidates, set_pending_suggestions, get_pending_suggestions, clear_pending_suggestions, suggest_token_nearest,
 )
 from .vertex import VertexAIClient
 
@@ -329,14 +329,15 @@ async def receive_message(request: Request) -> Response:
         if not matches:
             matches = find_closest_businesses(lat, lng, biz_type or "", limit=3, max_radius_km=200.0, allow_geo_fallback=False)
         if not matches:
-            # If no matches, suggest likely tag candidates and prompt the user
-            suggestions = suggest_tag_candidates(biz_type or "", limit=5)
-            if suggestions:
-                # store pending suggestions for this user and prompt
-                set_pending_suggestions(user_number, suggestions, biz_type or "")
+            # If no matches, suggest token-nearest candidates and prompt the user
+            token_suggestions = suggest_token_nearest(lat, lng, biz_type or "", token_limit=5)
+            if token_suggestions:
+                # store structured pending suggestions
+                opts = [s for s in token_suggestions]
+                set_pending_suggestions(user_number, opts, biz_type or "")
                 lines = ["I didn't find an exact match. Did you mean one of these? Reply with the number:"]
-                for i, s in enumerate(suggestions, start=1):
-                    lines.append(f"{i}. {s}")
+                for i, s in enumerate(opts, start=1):
+                    lines.append(f"{i}. {s['business_name']} (matches '{s['value']}') — {s['distance_km']:.1f} km")
                 await send_whatsapp_reply(user_number, "\n".join(lines))
                 log_message(user_number, "bot", "prompted suggestions")
                 return Response(status_code=200)
@@ -373,14 +374,32 @@ async def receive_message(request: Request) -> Response:
             m = re.match(r"^\s*(\d+)\s*$", user_text)
             if m:
                 idx = int(m.group(1)) - 1
-                opts = pending.get("options") or []
+                opts = pending.get("options") or pending.get("options") or []
                 if 0 <= idx < len(opts):
-                    choice = opts[idx]
-                    # clear pending and rerun search using the chosen tag
+                    choice_obj = opts[idx]
+                    # clear pending
                     clear_pending_suggestions(user_number)
-                    log_message(user_number, "user", f"selected_suggestion:{choice}")
-                    # use the chosen tag as business_type and continue below
-                    business_type = choice
+                    log_message(user_number, "user", f"selected_suggestion:{choice_obj}")
+                    # If the stored option is a dict with business_id, rerun a precise search
+                    if isinstance(choice_obj, dict) and choice_obj.get("business_id"):
+                        # perform search by business id (single result)
+                        bid = choice_obj["business_id"]
+                        # Fetch the business doc directly and return it
+                        from .firestore_client import _get_client
+                        c = _get_client()
+                        doc = c.collection("businesses").document(bid).get()
+                        if doc.exists:
+                            data = doc.to_dict() or {}
+                            latlng = data.get("location", {}).get("coordinates") or data.get("location", {})
+                            # respond with the single match
+                            await send_whatsapp_reply(user_number, f"Here is the business you selected: {data.get('name')} — located at {data.get('location', {}).get('address','unknown')}")
+                            return Response(status_code=200)
+                        else:
+                            await send_whatsapp_reply(user_number, "Sorry, I couldn't find the selected business anymore.")
+                            return Response(status_code=200)
+                    else:
+                        # If option is a simple tag string, set business_type to that tag
+                        business_type = choice_obj if isinstance(choice_obj, str) else str(choice_obj)
                 else:
                     await send_whatsapp_reply(user_number, "Sorry, I didn't understand that selection. Please reply with the number of your choice.")
                     return Response(status_code=200)
