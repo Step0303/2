@@ -302,6 +302,27 @@ def find_closest_businesses(
     client = _get_client()
     # Resolve text to a canonical tag/slug and also try to map to category ids
     base_text = (business_type or "").strip().lower()
+    # Phrase synonyms / expansions: common user phrases -> preferred normalized tags
+    # This helps map conversational phrases like 'used car' -> 'used cars'/'car sales'
+    SYNONYMS = {
+        "used car": ["used cars", "car sales", "car dealership", "vehicle sales"],
+        "used cars": ["used cars", "car sales", "car dealership", "vehicle sales"],
+        "second hand car": ["used cars", "car sales", "car dealership"],
+        "pre owned car": ["used cars", "car sales"],
+        "pre-owned car": ["used cars", "car sales"],
+        "used vehicle": ["used cars", "vehicle sales", "car sales"],
+        "used truck": ["truck sales", "vehicle sales"],
+        "used van": ["van sales", "vehicle sales"],
+    }
+    expansion_variants: List[str] = []
+    for key, ex_list in SYNONYMS.items():
+        if key in base_text:
+            # add slug/raw variants for each expansion term, preserving order
+            for ex in ex_list:
+                for v in _tag_variants(ex):
+                    if v not in expansion_variants:
+                        expansion_variants.append(v)
+            break
     # Try to map the free text to category ids (term_id in your DB)
     cat_ids = find_category_ids(base_text)
     # If we couldn't resolve a category id from the categories collection,
@@ -411,7 +432,15 @@ def find_closest_businesses(
             return results[:limit]
     # If no category mapping, fall back to tag-based search
     tag = resolve_tag_from_categories(base_text) or base_text
-    variants = _tag_variants(tag)
+    # Build prioritized variants: first use expansion_variants (if any), then
+    # the resolved tag variants (full phrase/slug)
+    variants: List[str] = []
+    if expansion_variants:
+        variants.extend(expansion_variants)
+    # then the canonical tag variants for the original phrase
+    for v in _tag_variants(tag):
+        if v not in variants:
+            variants.append(v)
 
     # Prefer exact normalized_tags matches for the full phrase or slug.
     # This avoids earlier tokenized queries matching unrelated businesses
