@@ -208,6 +208,31 @@ async def receive_message(request: Request) -> Response:
     lowered = user_text.lower()
     logger.info("Processing text message from %s: %s", user_number, user_text[:120])
 
+    # Early: if the user is replying to a previous suggestion prompt with a number,
+    # interpret it here so the rest of the flow uses the selected tag/business.
+    pending_early = get_pending_suggestions(user_number)
+    if pending_early:
+        import re
+        m = re.match(r"^\s*(\d+)\s*$", user_text)
+        if m:
+            idx = int(m.group(1)) - 1
+            opts = pending_early.get("options") or []
+            if 0 <= idx < len(opts):
+                choice_obj = opts[idx]
+                clear_pending_suggestions(user_number)
+                log_message(user_number, "user", f"selected_suggestion:{choice_obj}")
+                # If the stored option is a dict with a 'value' token, use that as the user's text
+                if isinstance(choice_obj, dict) and choice_obj.get("value"):
+                    user_text = choice_obj.get("value")
+                    lowered = user_text.lower()
+                elif isinstance(choice_obj, str):
+                    user_text = choice_obj
+                    lowered = user_text.lower()
+                # otherwise, leave user_text unchanged and let downstream handle
+            else:
+                await send_whatsapp_reply(user_number, "Sorry, I didn't understand that selection. Reply with the number of your choice.")
+                return Response(status_code=200)
+
     # Toggle debug mode
     if lowered == "debug":
         current = is_debug_enabled(user_number)
@@ -362,10 +387,16 @@ async def receive_message(request: Request) -> Response:
         return Response(status_code=200)
 
     # v1.8: Otherwise, if the message appears to be a general business search, use the business prompt
+    # v2.1: category-driven search: if user mentions a category from the categories collection
     if any(kw in lowered for kw in ["business ", "find ", "restaurant", "garage", "pharmacy", "hospital", "doctor", "shop", "cafe", "coffee"]):
         # First check if we have user location to enhance business search
         loc = get_user_location(user_number)
         client = VertexAIClient()
+        # If user wants to search but has no saved location, ask them to provide one (address or location pin)
+        if not loc:
+            await send_whatsapp_reply(user_number, "Please share your location (pin) or type your address so I can search nearby businesses.")
+            log_message(user_number, "bot", "requested location for search")
+            return Response(status_code=200)
         # Check if the user is replying to a suggestions prompt with a number
         pending = get_pending_suggestions(user_number)
         if pending:
@@ -416,6 +447,52 @@ async def receive_message(request: Request) -> Response:
                     if idx >= 0:
                         business_type = lowered[idx + len(kw):].strip()
                         break
+
+            # v2.1: When a user provides a business type, first look for exact category ids
+            # (category documents). If found, query businesses by category within 10km.
+            if loc and business_type:
+                lat, lng = loc
+                # Resolve category ids first (exact slug/name match)
+                cat_ids = find_category_ids(business_type)
+                if not cat_ids:
+                    # Try suggesting categories from the categories collection
+                    from .firestore_client import suggest_categories
+                    cats = suggest_categories(business_type, limit=5)
+                    if cats:
+                        # Prompt user with categories to choose from
+                        set_pending_suggestions(user_number, cats, business_type)
+                        lines = ["I found several category matches. Which did you mean? Reply with the number:"]
+                        for i, c in enumerate(cats, start=1):
+                            lines.append(f"{i}. {c.get('name')} (")
+                        await send_whatsapp_reply(user_number, "\n".join(lines))
+                        log_message(user_number, "bot", "prompted category choices")
+                        return Response(status_code=200)
+                    # If no categories suggested, proceed to token nearest suggestion flow below
+                else:
+                    # We have category ids — query businesses within 10 km
+                    from .firestore_client import get_businesses_by_category_and_radius
+                    businesses = get_businesses_by_category_and_radius(cat_ids, lat, lng, radius_km=10.0)
+                    if not businesses:
+                        # Prompt user to increase radius
+                        set_pending_suggestions(user_number, ["increase_radius"], business_type)
+                        await send_whatsapp_reply(user_number, "I couldn't find businesses within 10 km. Reply 'yes' to increase radius to 50 km or 'no' to cancel.")
+                        log_message(user_number, "bot", "prompted to increase radius")
+                        return Response(status_code=200)
+                    # If one entry found, show full entry; if multiple, prompt user to choose
+                    if len(businesses) == 1:
+                        b = businesses[0]
+                        # Present full document entry
+                        await send_whatsapp_reply(user_number, f"{b.get('name')} — {b.get('location', {}).get('address','')}. Details: {b}")
+                        log_message(user_number, "bot", "sent full business entry")
+                        return Response(status_code=200)
+                    # multiple entries — prompt selection
+                    set_pending_suggestions(user_number, businesses, business_type)
+                    lines = ["I found multiple businesses in that category within 10 km. Reply with the number to see full details:"]
+                    for i, b in enumerate(businesses, start=1):
+                        lines.append(f"{i}. {b.get('name')} — {b.get('distance_km',0):.1f} km")
+                    await send_whatsapp_reply(user_number, "\n".join(lines))
+                    log_message(user_number, "bot", "prompted business choices")
+                    return Response(status_code=200)
             
             # If we have location and business type, try to find closest businesses first
             if loc and business_type:

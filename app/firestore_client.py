@@ -120,6 +120,24 @@ def upsert_whatsapp_user_location(phone: str, latitude: float, longitude: float)
     }, merge=True)
 
 
+def upsert_whatsapp_user_location_with_address(phone: str, latitude: float, longitude: float, address: str | None = None) -> None:
+    """Store user location plus a human-readable formatted address when available."""
+    client = _get_client()
+    doc = client.collection("whatsapp_users").document(phone)
+    payload = {
+        "phone": phone,
+        "location": {
+            "coordinate": {"lat": latitude, "lng": longitude},
+            "lat": latitude,
+            "lng": longitude,
+        },
+    }
+    if address:
+        payload["location"]["address"] = address
+        payload["location"]["formatted_address"] = address
+    doc.set(payload, merge=True)
+
+
 def get_user_location(phone: str) -> Optional[Tuple[float, float]]:
     client = _get_client()
     doc = client.collection("whatsapp_users").document(phone).get()
@@ -221,6 +239,76 @@ def suggest_tag_candidates(free_text: str, limit: int = 5) -> List[str]:
     # sort by frequency then alphabetically
     sorted_tags = sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))
     return [t for t, _ in sorted_tags[:limit]]
+
+
+def suggest_categories(free_text: str, limit: int = 5) -> List[dict]:
+    """Suggest category documents that are close to the free_text.
+
+    Returns a list of dicts with keys: id, name, slug (when available).
+    """
+    client = _get_client()
+    import re
+    needle = (free_text or "").strip().lower()
+    if not needle:
+        return []
+    tokens = [t for t in re.split(r"[^a-z0-9]+", needle) if t]
+    matches: List[dict] = []
+    # First try slug exact
+    slug = _slugify(needle)
+    for d in client.collection("categories").where("slug", "==", slug).limit(limit).stream():
+        data = d.to_dict() or {}
+        matches.append({"id": d.id, "name": data.get("name"), "slug": data.get("slug")})
+    if matches:
+        return matches[:limit]
+    # Bounded scan scoring by token hits
+    scores = {}
+    for d in client.collection("categories").limit(500).stream():
+        data = d.to_dict() or {}
+        name = str(data.get("name") or "").lower()
+        score = 0
+        for t in tokens:
+            if t in name:
+                score += 1
+        if score > 0:
+            scores[d.id] = (score, data)
+    sorted_cats = sorted(scores.items(), key=lambda kv: (-kv[1][0], kv[0]))[:limit]
+    out = []
+    for cid, (score, data) in sorted_cats:
+        out.append({"id": cid, "name": data.get("name"), "slug": data.get("slug")})
+    return out
+
+
+def get_businesses_by_category_and_radius(cat_ids: List[str], lat: float, lng: float, radius_km: float = 10.0) -> List[dict]:
+    """Return full business documents whose `category` is in cat_ids and within radius_km of lat/lng.
+
+    Returns list of dicts: each is the full Firestore document with added '__id' and 'distance_km'.
+    """
+    client = _get_client()
+    out: List[dict] = []
+    if not cat_ids:
+        return out
+    # Query by category equality per id (avoids indexing issues with 'in' on older DBs)
+    seen = set()
+    for cid in cat_ids:
+        for d in client.collection("businesses").where("category", "==", cid).stream():
+            if d.id in seen:
+                continue
+            seen.add(d.id)
+            data = d.to_dict() or {}
+            bl, bg = _extract_lat_lng_from_doc(data)
+            if bl is None or bg is None:
+                continue
+            try:
+                dist = haversine_km(lat, lng, float(bl), float(bg))
+            except Exception:
+                continue
+            if radius_km is not None and dist > float(radius_km):
+                continue
+            data["__id"] = d.id
+            data["distance_km"] = dist
+            out.append(data)
+    out.sort(key=lambda x: x.get("distance_km", 999999))
+    return out
 
 
 def suggest_token_nearest(user_lat: float, user_lng: float, free_text: str, token_limit: int = 5):
