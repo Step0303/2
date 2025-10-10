@@ -545,6 +545,47 @@ def execute_structured_query(spec: dict, *, user_lat: Optional[float] = None, us
     out.sort(key=lambda x: x.get("__distance_km", 999999))
 
     # Trim results to requested limit
+    # If no results and filters contained string tokens, try a name/description/tag substring fallback
+    if not out:
+        # Build token set from filter values
+        import re
+        tokens: Set[str] = set()
+        for f in filters:
+            val = f.get("value")
+            if isinstance(val, str):
+                for t in re.split(r"[^a-z0-9]+", val.lower()):
+                    if len(t) > 1:
+                        tokens.add(t)
+        # If we have tokens, scan and match against name/description/tags
+        if tokens:
+            out2: List[dict] = []
+            for d in colref.limit(max_scan).stream():
+                data = d.to_dict() or {}
+                name = str(data.get("name") or "").lower()
+                desc = str(data.get("description") or data.get("about") or "").lower()
+                tags = [str(x).lower() for x in (data.get("normalized_tags") or [])]
+                matched = False
+                for t in tokens:
+                    if t in name or t in desc or any(t in tag for tag in tags):
+                        matched = True
+                        break
+                if not matched:
+                    continue
+                lat2, lng2 = _extract_lat_lng_from_doc(data)
+                dist2 = None
+                if lat is not None and lng is not None and lat2 is not None and lng2 is not None:
+                    try:
+                        dist2 = haversine_km(float(lat), float(lng), float(lat2), float(lng2))
+                    except Exception:
+                        dist2 = None
+                if radius is not None and dist2 is not None and float(dist2) > float(radius):
+                    continue
+                if dist2 is not None:
+                    data["__distance_km"] = dist2
+                data["__id"] = d.id
+                out2.append(data)
+            out2.sort(key=lambda x: x.get("__distance_km", 999999))
+            return out2[:limit]
     return out[:limit]
 
 

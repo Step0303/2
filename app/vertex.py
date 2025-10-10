@@ -281,6 +281,41 @@ class VertexAIClient:
         except Exception:
             return "No results yet."
 
+    def suggest_alternatives(self, user_text: str, candidates: list) -> list:
+        """Ask the LLM to provide a short list of suggested alternative search terms based on the user's text.
+
+        `candidates` is a list of candidate strings (e.g., tags or nearby names). Returns a list of suggestion strings.
+        """
+        # Keep the prompt lightweight
+        import json
+        prompt = (
+            f"Given the user query: {user_text.strip()}, suggest up to 6 short alternative search phrases or tags from this list: {json.dumps(candidates)}. "
+            "Return a JSON array of strings only."
+        )
+        try:
+            response = self._model.generate_content(prompt)
+            text = getattr(response, "text", None)
+            if not text:
+                pieces = []
+                for cand in getattr(response, "candidates", []) or []:
+                    content = getattr(cand, "content", None)
+                    parts = getattr(content, "parts", []) if content is not None else []
+                    for p in parts or []:
+                        t = getattr(p, "text", None)
+                        if isinstance(t, str) and t.strip():
+                            pieces.append(t.strip())
+                text = "\n".join(pieces).strip()
+            import re, json
+            m = re.search(r"\[.*\]", text, re.S)
+            if m:
+                arr = json.loads(m.group(0))
+                return [str(x) for x in arr][:6]
+            # fallback: split lines
+            lines = [l.strip() for l in text.splitlines() if l.strip()]
+            return lines[:6]
+        except Exception:
+            return []
+
     @staticmethod
     def _load_prompt(path: Optional[str]) -> Optional[str]:
         if not path:

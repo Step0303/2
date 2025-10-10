@@ -401,6 +401,31 @@ async def receive_message(request: Request) -> Response:
             await send_whatsapp_reply(user_number, "Sorry, I couldn't run that search right now.")
             return Response(status_code=200)
 
+        if not results:
+            # Ask LLM for alternative suggestions (did-you-mean) using nearby tags/names
+            # Build candidate list by scanning a small set of businesses for tags/names
+            from .firestore_client import _get_client
+            c = _get_client()
+            cand = set()
+            for d in c.collection("businesses").limit(200).stream():
+                data = d.to_dict() or {}
+                for t in (data.get("normalized_tags") or []):
+                    if isinstance(t, str) and t.strip():
+                        cand.add(t.strip())
+                name = str(data.get("name") or "").strip()
+                if name:
+                    cand.add(name)
+            cand_list = list(cand)[:200]
+            suggestions = client.suggest_alternatives(user_text, cand_list)
+            if suggestions:
+                set_pending_suggestions(user_number, [ {"value": s} for s in suggestions ], user_text)
+                lines = ["I didn't find exact matches. Did you mean one of these? Reply with the number:"]
+                for i, s in enumerate(suggestions, start=1):
+                    lines.append(f"{i}. {s}")
+                await send_whatsapp_reply(user_number, "\n".join(lines))
+                log_message(user_number, "bot", "prompted suggestions")
+                return Response(status_code=200)
+
         # Ask LLM to format the results into a nice WhatsApp reply
         formatted = client.format_results_with_llm(user_text, results, user_number=user_number)
         log_message(user_number, "user", user_text)
