@@ -345,6 +345,48 @@ def find_category_ids(free_text: str) -> List[str]:
     return ids
 
 
+def infer_category_ids_from_business_tags(free_text: str, scan_limit: int = 500) -> List[str]:
+    """When `categories` collection does not contain the phrase, try to infer
+    category ids by scanning businesses whose `normalized_tags` or `tags`
+    contain the phrase (or slug). Return a list of candidate category ids
+    ordered by frequency (most frequent first).
+    """
+    if not free_text or not str(free_text).strip():
+        return []
+    client = _get_client()
+    import re
+    slug = _slugify(free_text)
+    tokens = [t for t in re.split(r"[^a-z0-9]+", free_text.lower()) if len(t) > 1]
+    counts: Dict[str, int] = {}
+    scanned = 0
+    for d in client.collection("businesses").limit(int(scan_limit)).stream():
+        scanned += 1
+        data = d.to_dict() or {}
+        tags = [str(x).lower() for x in (data.get("normalized_tags") or [])]
+        tags += [str(x).lower() for x in (data.get("tags") or [])]
+        name = str(data.get("name") or "").lower()
+        matched = False
+        # match slug or any token in tags or name
+        if slug and any(slug == t or slug in t for t in tags):
+            matched = True
+        if not matched:
+            for t in tokens:
+                if any(t in tag for tag in tags) or t in name:
+                    matched = True
+                    break
+        if not matched:
+            continue
+        cat = data.get("category")
+        if not cat:
+            continue
+        counts[str(cat)] = counts.get(str(cat), 0) + 1
+    if not counts:
+        return []
+    # return category ids ordered by frequency
+    sorted_ids = [cid for cid, _ in sorted(counts.items(), key=lambda kv: -kv[1])]
+    return sorted_ids
+
+
 def _tag_variants(text: str) -> List[str]:
     """Return possible tag spellings to match DB values.
 

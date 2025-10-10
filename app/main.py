@@ -15,7 +15,7 @@ from .firestore_client import (
     log_message, fetch_conversation, clear_conversation,
     set_debug_enabled, is_debug_enabled,
     upsert_whatsapp_user_location, get_user_location, find_closest_businesses,
-    find_category_ids, resolve_tag_from_categories,
+    find_category_ids, resolve_tag_from_categories, infer_category_ids_from_business_tags,
     suggest_tag_candidates, set_pending_suggestions, get_pending_suggestions, clear_pending_suggestions, suggest_token_nearest,
     upsert_whatsapp_user_location_with_address, businesses_by_category_within_radius,
 )
@@ -105,7 +105,14 @@ def debug_resolve_category(phrase: str = "", api_key: str = None):
         return {"error": "invalid api_key"}
     slug = resolve_tag_from_categories(phrase or "")
     ids = find_category_ids(phrase or "")
-    return {"phrase": phrase, "slug": slug, "category_ids": ids}
+    # If categories collection didn't match, try inferring from businesses
+    inferred = []
+    if not ids:
+        try:
+            inferred = infer_category_ids_from_business_tags(phrase or "")
+        except Exception:
+            inferred = []
+    return {"phrase": phrase, "slug": slug, "category_ids": ids, "inferred_category_ids": inferred}
 
 
 @app.get("/debug/business")
@@ -356,6 +363,12 @@ async def receive_message(request: Request) -> Response:
         # For v2.1: if user provided a category that exists in categories collection,
         # prefer category-based results within 10km and prompt to increase radius if none.
         cat_ids = find_category_ids(biz_type or "")
+        # If categories collection has no mapping, try to infer from business tags
+        if not cat_ids:
+            try:
+                cat_ids = infer_category_ids_from_business_tags(biz_type or "")
+            except Exception:
+                cat_ids = []
         if cat_ids:
             # Use first category id for now
             cat_id = cat_ids[0]
