@@ -309,6 +309,27 @@ def suggest_token_nearest(user_lat: float, user_lng: float, free_text: str, toke
     return suggestions
 
 
+def set_last_structured_query(phone: str, spec: dict) -> None:
+    """Store the last structured query produced for a user for auditing/debugging."""
+    client = _get_client()
+    doc = client.collection("whatsapp_users").document(phone)
+    try:
+        doc.set({"last_structured_query": spec}, merge=True)
+    except Exception:
+        # best-effort, don't raise
+        pass
+
+
+def set_last_suggestions(phone: str, suggestions: list) -> None:
+    """Store the last suggestion strings produced for a user."""
+    client = _get_client()
+    doc = client.collection("whatsapp_users").document(phone)
+    try:
+        doc.set({"last_suggestions": suggestions}, merge=True)
+    except Exception:
+        pass
+
+
 def _slugify(text: str) -> str:
     """Normalize free text to a slug used in categories and tags.
 

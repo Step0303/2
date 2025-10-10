@@ -154,6 +154,32 @@ def debug_get_business(id: str | None = None, ids: str | None = None, api_key: s
         })
     return {"count": len(out), "results": out}
 
+@app.get("/debug/whatsapp_user")
+def debug_whatsapp_user(phone: str, api_key: str | None = None):
+    """Return stored whatsapp_users/{phone} fields useful for debugging.
+
+    Protected by DEBUG_API_KEY if set.
+    """
+    import os
+    from .firestore_client import _get_client
+    key = os.environ.get("DEBUG_API_KEY")
+    if key and api_key != key:
+        return {"error": "invalid api_key"}
+    c = _get_client()
+    doc = c.collection("whatsapp_users").document(phone).get()
+    if not doc.exists:
+        return {"found": False}
+    data = doc.to_dict() or {}
+    # return only useful fields
+    return {
+        "found": True,
+        "phone": data.get("phone"),
+        "location": data.get("location"),
+        "pending_suggestions": data.get("pending_suggestions"),
+        "last_structured_query": data.get("last_structured_query"),
+        "last_suggestions": data.get("last_suggestions"),
+    }
+
 
 @app.get("/webhook")
 async def verify_webhook(
