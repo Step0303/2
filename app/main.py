@@ -17,6 +17,7 @@ from .firestore_client import (
     upsert_whatsapp_user_location, get_user_location, find_closest_businesses,
     find_category_ids, resolve_tag_from_categories,
     suggest_tag_candidates, set_pending_suggestions, get_pending_suggestions, clear_pending_suggestions, suggest_token_nearest,
+    upsert_whatsapp_user_location_with_address, businesses_by_category_within_radius,
 )
 from .vertex import VertexAIClient
 
@@ -303,8 +304,10 @@ async def receive_message(request: Request) -> Response:
             loc = results[0].get("geometry", {}).get("location", {})
             lat = float(loc.get("lat"))
             lng = float(loc.get("lng"))
-            upsert_whatsapp_user_location(user_number, lat, lng)
-            await send_whatsapp_reply(user_number, f"Got it – I've updated your location to {results[0].get('formatted_address','that area')}.")
+            # Save address + coords for v2.1
+            formatted = results[0].get('formatted_address')
+            upsert_whatsapp_user_location_with_address(user_number, lat, lng, formatted)
+            await send_whatsapp_reply(user_number, f"Got it – I've updated your location to {formatted}.")
             log_message(user_number, "bot", "[saved geocoded location]")
             return Response(status_code=200)
         except Exception:
@@ -340,34 +343,60 @@ async def receive_message(request: Request) -> Response:
 
         loc = get_user_location(user_number)
         if not loc:
+            # Prompt for location; user must provide to continue
             await send_whatsapp_reply(
                 user_number,
-                "Could you please share your current location using the WhatsApp location pin? Then ask again.",
+                "Please share your current location (use the WhatsApp location pin) so I can find nearby businesses."
             )
             log_message(user_number, "bot", "Requested location pin for closest search")
             return Response(status_code=200)
 
         lat, lng = loc
         logger.info("Closest search user=%s phrase='%s' lat=%s lng=%s", user_number, biz_type, lat, lng)  # debug trace
-        # Try progressively larger radii, then fall back to DB list if still empty
-        matches = find_closest_businesses(lat, lng, biz_type or "", limit=3, max_radius_km=50.0, allow_geo_fallback=False)
-        if not matches:
-            matches = find_closest_businesses(lat, lng, biz_type or "", limit=3, max_radius_km=200.0, allow_geo_fallback=False)
-        if not matches:
-            # If no matches, suggest token-nearest candidates and prompt the user
-            token_suggestions = suggest_token_nearest(lat, lng, biz_type or "", token_limit=5)
-            if token_suggestions:
-                # store structured pending suggestions
-                opts = [s for s in token_suggestions]
-                set_pending_suggestions(user_number, opts, biz_type or "")
-                lines = ["I didn't find an exact match. Did you mean one of these? Reply with the number:"]
-                for i, s in enumerate(opts, start=1):
-                    lines.append(f"{i}. {s['business_name']} (matches '{s['value']}') — {s['distance_km']:.1f} km")
-                await send_whatsapp_reply(user_number, "\n".join(lines))
-                log_message(user_number, "bot", "prompted suggestions")
+        # For v2.1: if user provided a category that exists in categories collection,
+        # prefer category-based results within 10km and prompt to increase radius if none.
+        cat_ids = find_category_ids(biz_type or "")
+        if cat_ids:
+            # Use first category id for now
+            cat_id = cat_ids[0]
+            entries = businesses_by_category_within_radius(cat_id, lat, lng, radius_km=10.0, limit=200)
+            if not entries:
+                # ask user to increase radius
+                await send_whatsapp_reply(user_number, "I couldn't find any businesses in that category within 10 km. Would you like me to search a wider radius (reply 'yes' to increase to 50 km)?")
+                # store pending options to detect next reply; reuse pending_suggestions record
+                set_pending_suggestions(user_number, ["increase_radius_50"], biz_type or "")
                 return Response(status_code=200)
-            # final fallback: broad DB search by name/tags
-            matches = find_closest_businesses(lat, lng, biz_type or "", limit=3, max_radius_km=None)
+            # If entries found and only one, show full entry; if multiple, prompt selection
+            if len(entries) == 1:
+                b = entries[0]
+                # show full entry JSON (trim large fields)
+                pretty = f"{b.get('name')}\nAddress: {b.get('location',{}).get('address','unknown')}\nPhone: {b.get('contact',{}).get('phone','n/a')}\nCategories: {b.get('categories')}\nDescription: {b.get('description','')[:400]}"
+                await send_whatsapp_reply(user_number, pretty)
+                return Response(status_code=200)
+            # multiple entries -> prompt selection
+            lines = ["I found multiple businesses in that category within 10 km. Reply with the number to see the full entry:"]
+            for i, b in enumerate(entries[:10], start=1):
+                lines.append(f"{i}. {b.get('name')} — {b.get('__distance_km', 0):.1f} km")
+            # store structured options as pending
+            opts = entries[:10]
+            set_pending_suggestions(user_number, opts, biz_type or "")
+            await send_whatsapp_reply(user_number, "\n".join(lines))
+            return Response(status_code=200)
+        else:
+            # No exact category found; fall back to prior suggestion flow
+            matches = find_closest_businesses(lat, lng, biz_type or "", limit=3, max_radius_km=50.0, allow_geo_fallback=False)
+            if not matches:
+                token_suggestions = suggest_token_nearest(lat, lng, biz_type or "", token_limit=5)
+                if token_suggestions:
+                    opts = [s for s in token_suggestions]
+                    set_pending_suggestions(user_number, opts, biz_type or "")
+                    lines = ["I didn't find an exact match. Did you mean one of these? Reply with the number:"]
+                    for i, s in enumerate(opts, start=1):
+                        lines.append(f"{i}. {s['business_name']} (matches '{s['value']}') — {s['distance_km']:.1f} km")
+                    await send_whatsapp_reply(user_number, "\n".join(lines))
+                    log_message(user_number, "bot", "prompted suggestions")
+                    return Response(status_code=200)
+                matches = find_closest_businesses(lat, lng, biz_type or "", limit=3, max_radius_km=None)
         logger.info("Closest search results user=%s phrase='%s' count=%d", user_number, biz_type, len(matches))  # debug trace
         if not matches:
             await send_whatsapp_reply(user_number, "I couldn't find matching places nearby in my list.")
@@ -387,16 +416,10 @@ async def receive_message(request: Request) -> Response:
         return Response(status_code=200)
 
     # v1.8: Otherwise, if the message appears to be a general business search, use the business prompt
-    # v2.1: category-driven search: if user mentions a category from the categories collection
     if any(kw in lowered for kw in ["business ", "find ", "restaurant", "garage", "pharmacy", "hospital", "doctor", "shop", "cafe", "coffee"]):
         # First check if we have user location to enhance business search
         loc = get_user_location(user_number)
         client = VertexAIClient()
-        # If user wants to search but has no saved location, ask them to provide one (address or location pin)
-        if not loc:
-            await send_whatsapp_reply(user_number, "Please share your location (pin) or type your address so I can search nearby businesses.")
-            log_message(user_number, "bot", "requested location for search")
-            return Response(status_code=200)
         # Check if the user is replying to a suggestions prompt with a number
         pending = get_pending_suggestions(user_number)
         if pending:
@@ -447,52 +470,6 @@ async def receive_message(request: Request) -> Response:
                     if idx >= 0:
                         business_type = lowered[idx + len(kw):].strip()
                         break
-
-            # v2.1: When a user provides a business type, first look for exact category ids
-            # (category documents). If found, query businesses by category within 10km.
-            if loc and business_type:
-                lat, lng = loc
-                # Resolve category ids first (exact slug/name match)
-                cat_ids = find_category_ids(business_type)
-                if not cat_ids:
-                    # Try suggesting categories from the categories collection
-                    from .firestore_client import suggest_categories
-                    cats = suggest_categories(business_type, limit=5)
-                    if cats:
-                        # Prompt user with categories to choose from
-                        set_pending_suggestions(user_number, cats, business_type)
-                        lines = ["I found several category matches. Which did you mean? Reply with the number:"]
-                        for i, c in enumerate(cats, start=1):
-                            lines.append(f"{i}. {c.get('name')} (")
-                        await send_whatsapp_reply(user_number, "\n".join(lines))
-                        log_message(user_number, "bot", "prompted category choices")
-                        return Response(status_code=200)
-                    # If no categories suggested, proceed to token nearest suggestion flow below
-                else:
-                    # We have category ids — query businesses within 10 km
-                    from .firestore_client import get_businesses_by_category_and_radius
-                    businesses = get_businesses_by_category_and_radius(cat_ids, lat, lng, radius_km=10.0)
-                    if not businesses:
-                        # Prompt user to increase radius
-                        set_pending_suggestions(user_number, ["increase_radius"], business_type)
-                        await send_whatsapp_reply(user_number, "I couldn't find businesses within 10 km. Reply 'yes' to increase radius to 50 km or 'no' to cancel.")
-                        log_message(user_number, "bot", "prompted to increase radius")
-                        return Response(status_code=200)
-                    # If one entry found, show full entry; if multiple, prompt user to choose
-                    if len(businesses) == 1:
-                        b = businesses[0]
-                        # Present full document entry
-                        await send_whatsapp_reply(user_number, f"{b.get('name')} — {b.get('location', {}).get('address','')}. Details: {b}")
-                        log_message(user_number, "bot", "sent full business entry")
-                        return Response(status_code=200)
-                    # multiple entries — prompt selection
-                    set_pending_suggestions(user_number, businesses, business_type)
-                    lines = ["I found multiple businesses in that category within 10 km. Reply with the number to see full details:"]
-                    for i, b in enumerate(businesses, start=1):
-                        lines.append(f"{i}. {b.get('name')} — {b.get('distance_km',0):.1f} km")
-                    await send_whatsapp_reply(user_number, "\n".join(lines))
-                    log_message(user_number, "bot", "prompted business choices")
-                    return Response(status_code=200)
             
             # If we have location and business type, try to find closest businesses first
             if loc and business_type:
