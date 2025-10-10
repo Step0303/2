@@ -360,43 +360,11 @@ async def receive_message(request: Request) -> Response:
 
         lat, lng = loc
         logger.info("Closest search user=%s phrase='%s' lat=%s lng=%s", user_number, biz_type, lat, lng)  # debug trace
-        # For v2.1: if user provided a category that exists in categories collection,
-        # prefer category-based results within 10km and prompt to increase radius if none.
-        cat_ids = find_category_ids(biz_type or "")
-        # If categories collection has no mapping, try to infer from business tags
-        if not cat_ids:
-            try:
-                cat_ids = infer_category_ids_from_business_tags(biz_type or "")
-            except Exception:
-                cat_ids = []
-        if cat_ids:
-            # Use first category id for now
-            cat_id = cat_ids[0]
-            entries = businesses_by_category_within_radius(cat_id, lat, lng, radius_km=10.0, limit=200)
-            if not entries:
-                # ask user to increase radius
-                await send_whatsapp_reply(user_number, "I couldn't find any businesses in that category within 10 km. Would you like me to search a wider radius (reply 'yes' to increase to 50 km)?")
-                # store pending options to detect next reply; reuse pending_suggestions record
-                set_pending_suggestions(user_number, ["increase_radius_50"], biz_type or "")
-                return Response(status_code=200)
-            # If entries found and only one, show full entry; if multiple, prompt selection
-            if len(entries) == 1:
-                b = entries[0]
-                # show full entry JSON (trim large fields)
-                pretty = f"{b.get('name')}\nAddress: {b.get('location',{}).get('address','unknown')}\nPhone: {b.get('contact',{}).get('phone','n/a')}\nCategories: {b.get('categories')}\nDescription: {b.get('description','')[:400]}"
-                await send_whatsapp_reply(user_number, pretty)
-                return Response(status_code=200)
-            # multiple entries -> prompt selection
-            lines = ["I found multiple businesses in that category within 10 km. Reply with the number to see the full entry:"]
-            for i, b in enumerate(entries[:10], start=1):
-                lines.append(f"{i}. {b.get('name')} — {b.get('__distance_km', 0):.1f} km")
-            # store structured options as pending
-            opts = entries[:10]
-            set_pending_suggestions(user_number, opts, biz_type or "")
-            await send_whatsapp_reply(user_number, "\n".join(lines))
-            return Response(status_code=200)
-        else:
-            # No exact category found; fall back to prior suggestion flow
+        # New v2.2: LLM-first structured query
+        client = VertexAIClient()
+        spec = client.generate_structured_query(biz_type or user_text, user_lat=lat, user_lng=lng)
+        if not spec:
+            # fallback to previous behavior if LLM didn't produce a query
             matches = find_closest_businesses(lat, lng, biz_type or "", limit=3, max_radius_km=50.0, allow_geo_fallback=False)
             if not matches:
                 token_suggestions = suggest_token_nearest(lat, lng, biz_type or "", token_limit=5)
@@ -410,22 +378,34 @@ async def receive_message(request: Request) -> Response:
                     log_message(user_number, "bot", "prompted suggestions")
                     return Response(status_code=200)
                 matches = find_closest_businesses(lat, lng, biz_type or "", limit=3, max_radius_km=None)
-        logger.info("Closest search results user=%s phrase='%s' count=%d", user_number, biz_type, len(matches))  # debug trace
-        if not matches:
-            await send_whatsapp_reply(user_number, "I couldn't find matching places nearby in my list.")
-            log_message(user_number, "bot", "No nearby results")
+            if not matches:
+                await send_whatsapp_reply(user_number, "I couldn't find matching places nearby in my list.")
+                log_message(user_number, "bot", "No nearby results")
+                return Response(status_code=200)
+            # Format matches into a reply
+            lines = ["Here are the closest options:"]
+            for b, dist_km in matches:
+                lines.append(f"- {b.name} — {dist_km:.1f} km away")
+            reply = "\n".join(lines)
+            log_message(user_number, "user", user_text)
+            log_message(user_number, "bot", reply)
+            await send_whatsapp_reply(user_number, reply)
             return Response(status_code=200)
-        # Log details of returned matches for easier debugging/verification
-        for b, dkm in matches:
-            logger.info("Closest match: %s (id=%s) dist_km=%.3f", b.name, b.id, dkm)
 
-        lines = ["Here are the closest options:"]
-        for b, dist_km in matches:
-            lines.append(f"- {b.name} — {dist_km:.1f} km away")
-        reply = "\n".join(lines)
+        # Execute the structured query returned by the LLM
+        try:
+            from .firestore_client import execute_structured_query
+            results = execute_structured_query(spec, user_lat=lat, user_lng=lng)
+        except Exception as exc:
+            logger.exception("Structured query execution failed: %s", exc)
+            await send_whatsapp_reply(user_number, "Sorry, I couldn't run that search right now.")
+            return Response(status_code=200)
+
+        # Ask LLM to format the results into a nice WhatsApp reply
+        formatted = client.format_results_with_llm(user_text, results, user_number=user_number)
         log_message(user_number, "user", user_text)
-        log_message(user_number, "bot", reply)
-        await send_whatsapp_reply(user_number, reply)
+        log_message(user_number, "bot", formatted)
+        await send_whatsapp_reply(user_number, formatted)
         return Response(status_code=200)
 
     # v1.8: Otherwise, if the message appears to be a general business search, use the business prompt
@@ -471,44 +451,20 @@ async def receive_message(request: Request) -> Response:
                     await send_whatsapp_reply(user_number, "Sorry, I didn't understand that selection. Please reply with the number of your choice.")
                     return Response(status_code=200)
         try:
-            # Extract potential business type from query
-            import re
-            words = [w.lower() for w in re.findall(r"[a-zA-Z]+", user_text)]
-            business_type = ""
-            
-            # Try to extract business type from common patterns
-            for kw in ["find", "looking for", "need", "want", "search for"]:
-                if kw in lowered:
-                    idx = lowered.find(kw)
-                    if idx >= 0:
-                        business_type = lowered[idx + len(kw):].strip()
-                        break
-            
-            # If we have location and business type, try to find closest businesses first
-            if loc and business_type:
-                lat, lng = loc
-                matches = find_closest_businesses(lat, lng, business_type, limit=3, max_radius_km=50.0, allow_geo_fallback=False)
-                if matches:
-                    # Format results from Firestore directly
-                    lines = ["Here are some businesses that match your search:"]
-                    for b, dist_km in matches:
-                        lines.append(f"- {b.name} — {dist_km:.1f} km away")
-                    ai_reply = "\n".join(lines)
-                else:
-                    # If no direct matches, suggest likely tags and prompt user
-                    suggestions = suggest_tag_candidates(business_type or "", limit=5)
-                    if suggestions:
-                        set_pending_suggestions(user_number, suggestions, business_type or "")
-                        lines = ["I didn't find an exact match. Did you mean one of these? Reply with the number:"]
-                        for i, s in enumerate(suggestions, start=1):
-                            lines.append(f"{i}. {s}")
-                        await send_whatsapp_reply(user_number, "\n".join(lines))
-                        log_message(user_number, "bot", "prompted suggestions")
-                        return Response(status_code=200)
-                    # Fall back to AI if no suggestions
+            client = VertexAIClient()
+            # Ask LLM to produce a structured query
+            user_lat = loc[0] if loc else None
+            user_lng = loc[1] if loc else None
+            spec = client.generate_structured_query(user_text, user_lat=user_lat, user_lng=user_lng)
+            if spec:
+                try:
+                    from .firestore_client import execute_structured_query
+                    results = execute_structured_query(spec, user_lat=user_lat, user_lng=user_lng)
+                    ai_reply = client.format_results_with_llm(user_text, results, user_number=user_number)
+                except Exception:
+                    # if execution failed, fallback to the older behavior
                     ai_reply = client.generate_business_reply(user_text, user_number=user_number)
             else:
-                # No location or business type, use AI
                 ai_reply = client.generate_business_reply(user_text, user_number=user_number)
         except Exception as e:
             logger.error(f"Business search error: {e}")

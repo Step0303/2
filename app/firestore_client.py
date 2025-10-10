@@ -442,6 +442,112 @@ def search_businesses_by_tag(tag: str, *, limit: int = 5) -> List[dict]:
     return results
 
 
+def execute_structured_query(spec: dict, *, user_lat: Optional[float] = None, user_lng: Optional[float] = None, max_scan: int = 500, max_return: int = 50) -> List[dict]:
+    """Execute a validated structured query spec (from LLM) against Firestore.
+
+    Spec schema (partial):
+      {"collection":"businesses", "filters": [{"field":"normalized_tags","op":"array_contains","value":"pharmacy"}, ...],
+       "limit": 20, "geo": {"lat": -26.7, "lng": 27.5, "radius_km": 10.0} }
+
+    This function validates collection and ops, translates simple filters to
+    Firestore queries, performs a bounded scan, applies geo filtering server-side,
+    and returns a list of document dicts (with selected fields).
+    """
+    allowed_collections = {"businesses", "categories"}
+    allowed_ops = {"==", "array_contains", "in"}
+    # Basic validation
+    coll = spec.get("collection")
+    if coll not in allowed_collections:
+        raise ValueError("collection not allowed")
+    filters = spec.get("filters") or []
+    for f in filters:
+        if not isinstance(f, dict) or "field" not in f or "op" not in f:
+            raise ValueError("invalid filter")
+        if f["op"] not in allowed_ops:
+            raise ValueError("op not allowed")
+
+    client = _get_client()
+    colref = client.collection(coll)
+
+    # Try to translate simple filters into Firestore where clauses when possible
+    query = None
+    use_manual_scan = False
+    try:
+        # Start with the first filter as a base query
+        if filters:
+            # Only translate filters that are simple equality/array_contains/in
+            q = colref
+            for f in filters:
+                field = f.get("field")
+                op = f.get("op")
+                val = f.get("value")
+                if op == "array_contains":
+                    q = q.where(field, "array_contains", val)
+                elif op == "==":
+                    q = q.where(field, "==", val)
+                elif op == "in":
+                    q = q.where(field, "in", list(val) if isinstance(val, (list, tuple)) else [val])
+                else:
+                    use_manual_scan = True
+                    break
+            query = q
+        else:
+            # no filters => will require scan (dangerous)
+            use_manual_scan = True
+    except Exception:
+        use_manual_scan = True
+
+    docs = []
+    scanned = 0
+    limit = int(spec.get("limit") or max_return)
+    # Perform query or manual scan
+    if query is not None and not use_manual_scan:
+        # Execute the Firestore query, but cap total docs scanned
+        for d in query.limit(max_scan).stream():
+            scanned += 1
+            data = d.to_dict() or {}
+            data["__id"] = d.id
+            docs.append(data)
+            if len(docs) >= max_scan:
+                break
+    else:
+        # Full scan (bounded) across collection
+        for d in colref.limit(max_scan).stream():
+            scanned += 1
+            data = d.to_dict() or {}
+            data["__id"] = d.id
+            docs.append(data)
+
+    # Apply geo filtering if requested
+    geo = spec.get("geo") or {}
+    radius = geo.get("radius_km")
+    lat = geo.get("lat") or user_lat
+    lng = geo.get("lng") or user_lng
+    out: List[dict] = []
+    for data in docs:
+        # compute distance if possible
+        dlat, dlng = _extract_lat_lng_from_doc(data)
+        dist = None
+        if dlat is not None and dlng is not None and lat is not None and lng is not None:
+            try:
+                dist = haversine_km(float(lat), float(lng), float(dlat), float(dlng))
+            except Exception:
+                dist = None
+        # if radius specified and no distance or distance > radius then skip
+        if radius is not None and dist is not None and float(dist) > float(radius):
+            continue
+        # Attach computed distance for later formatting
+        if dist is not None:
+            data["__distance_km"] = dist
+        out.append(data)
+
+    # Sort by distance if present
+    out.sort(key=lambda x: x.get("__distance_km", 999999))
+
+    # Trim results to requested limit
+    return out[:limit]
+
+
 def businesses_by_category_within_radius(cat_id: str, user_lat: float, user_lng: float, radius_km: float = 10.0, limit: int = 100) -> List[dict]:
     """Return full business documents whose 'category' equals cat_id and are within radius_km of user coords.
 

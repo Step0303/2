@@ -186,6 +186,101 @@ class VertexAIClient:
             logging.exception("Vertex AI business parse error: %s", exc)
             return "No results yet. Could you specify the area or type?"
 
+    def generate_structured_query(self, user_text: str, *, user_lat: Optional[float] = None, user_lng: Optional[float] = None) -> Optional[dict]:
+        """Ask the LLM to produce a structured Firestore query JSON for the user's request.
+
+        Returns a dict following the schema expected by execute_structured_query, or
+        None if the LLM declines to produce a query.
+        """
+        # Build a concise prompt instructing the model to return ONLY JSON
+        base = (
+            "You are a query planner that outputs ONLY a JSON object describing a Firestore query. "
+            "Allowed collections: businesses, categories. "
+            "Allowed filter ops: ==, array_contains, in. "
+            "Schema: {\"collection\":\"businesses\", \"filters\":[{\"field\":...,\"op\":...,\"value\":...}], \"geo\":{\"lat\":...,\"lng\":...,\"radius_km\":...}, \"limit\": N }"
+        )
+        loc_part = ""
+        if user_lat is not None and user_lng is not None:
+            loc_part = f" User is at lat={user_lat}, lng={user_lng}."
+        prompt = (
+            f"{base}\n\nUser query: {user_text.strip()}\n{loc_part}\n\nProduce the JSON now."
+        )
+        try:
+            response = self._model.generate_content(prompt)
+            text = getattr(response, "text", None)
+            if not text:
+                # try candidates
+                pieces = []
+                for cand in getattr(response, "candidates", []) or []:
+                    content = getattr(cand, "content", None)
+                    parts = getattr(content, "parts", []) if content is not None else []
+                    for p in parts or []:
+                        t = getattr(p, "text", None)
+                        if isinstance(t, str) and t.strip():
+                            pieces.append(t.strip())
+                text = "\n".join(pieces).strip()
+            if not text:
+                return None
+            # Extract JSON from model output (best-effort)
+            import json, re
+            m = re.search(r"\{.*\}", text, re.S)
+            if not m:
+                # maybe the whole text is JSON
+                jtext = text
+            else:
+                jtext = m.group(0)
+            spec = json.loads(jtext)
+            return spec
+        except Exception:
+            return None
+
+    def format_results_with_llm(self, user_text: str, results: list, *, user_number: Optional[str] = None) -> str:
+        """Ask the LLM to format search results into a concise WhatsApp reply.
+
+        `results` is a list of dicts returned by execute_structured_query; we will
+        include only safe fields (name, location.address, contact.phone, normalized_tags, __distance_km)
+        to the LLM.
+        """
+        safe_lines = []
+        for r in results[:50]:
+            name = r.get("name") or r.get("__id")
+            address = ""
+            loc = r.get("location") or {}
+            if isinstance(loc, dict):
+                address = loc.get("address") or loc.get("addr") or ""
+            phone = None
+            contact = r.get("contact") or {}
+            if isinstance(contact, dict):
+                phone = contact.get("phone")
+            tags = ", ".join([t for t in (r.get("normalized_tags") or []) if isinstance(t, str)])
+            dist = r.get("__distance_km")
+            line = {"name": name, "address": address, "phone": phone, "tags": tags, "distance_km": dist}
+            safe_lines.append(line)
+
+        # Build prompt for LLM to format
+        import json
+        prompt = (
+            f"You are a result formatter. Given the user's query: {user_text.strip()}\n"
+            f"And the DB results (JSON): {json.dumps(safe_lines)[:15000]}\n"
+            "Return a concise WhatsApp-friendly list (max 6 items) with name, address, distance and one tip."
+        )
+        try:
+            response = self._model.generate_content(prompt)
+            text = getattr(response, "text", None)
+            if isinstance(text, str) and text.strip():
+                return text.strip()
+            pieces = []
+            for cand in getattr(response, "candidates", []) or []:
+                content = getattr(cand, "content", None)
+                parts = getattr(content, "parts", []) if content is not None else []
+                for p in parts or []:
+                    t = getattr(p, "text", None)
+                    if isinstance(t, str) and t.strip():
+                        pieces.append(t.strip())
+            return "\n".join(pieces).strip() or "No results yet."
+        except Exception:
+            return "No results yet."
+
     @staticmethod
     def _load_prompt(path: Optional[str]) -> Optional[str]:
         if not path:
